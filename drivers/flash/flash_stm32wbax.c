@@ -214,8 +214,40 @@ static int erase_page(const struct device *dev, unsigned int offset)
 		return rc;
 	}
 
-	page = offset / FLASH_PAGE_SIZE;
-	LOG_DBG("Erase page %d\n", page);
+	if (STM32_FLASH_HAS_2_BANKS(dev)) {
+		bool bank_swap;
+		/* Check whether bank1/2 are swapped */
+		bank_swap =
+		((regs->OPTR & FLASH_OPTR_SWAP_BANK) == FLASH_OPTR_SWAP_BANK);
+
+		if ((offset < (FLASH_SIZE / 2)) && !bank_swap) {
+			/* The pages to be erased is in bank 1 */
+			regs->NSCR &= ~FLASH_STM32_NSBKER_MSK;
+			page = offset / FLASH_PAGE_SIZE;
+			LOG_DBG("Erase page %d on bank 1", page);
+		} else if ((offset >= BANK2_OFFSET) && bank_swap) {
+			/* The pages to be erased is in bank 1 */
+			regs->NSCR &= ~FLASH_STM32_NSBKER_MSK;
+			page = (offset - BANK2_OFFSET) / FLASH_PAGE_SIZE;
+			LOG_DBG("Erase page %d on bank 1", page);
+		} else if ((offset < (FLASH_SIZE / 2)) && bank_swap) {
+			/* The pages to be erased is in bank 2 */
+			regs->NSCR |= FLASH_STM32_NSBKER;
+			page = offset / FLASH_PAGE_SIZE;
+			LOG_DBG("Erase page %d on bank 2", page);
+		} else if ((offset >= BANK2_OFFSET) && !bank_swap) {
+			/* The pages to be erased is in bank 2 */
+			regs->NSCR |= FLASH_STM32_NSBKER;
+			page = (offset - BANK2_OFFSET) / FLASH_PAGE_SIZE;
+			LOG_DBG("Erase page %d on bank 2", page);
+		} else {
+			LOG_ERR("Offset %d does not exist", offset);
+			return -EINVAL;
+		}
+	} else {
+		page = offset / FLASH_PAGE_SIZE;
+		LOG_DBG("Erase page %d\n", page);
+	}
 
 	/* Set the NSPER bit and select the page you wish to erase */
 	regs->NSCR |= FLASH_STM32_NSPER;
