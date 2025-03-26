@@ -9,6 +9,7 @@
 
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
+#include <zephyr/debug_gpios.h>
 
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/hci.h>
@@ -189,6 +190,15 @@ static void blink_stop(void)
 int main(void)
 {
 	int err;
+
+	init_debug_gpios();
+
+	/* Test the GPIOs, Check to be done with a logic analyzer */
+	for (int i=0; i<DEBUG_GPIO_COUNT; i++) {
+		set_debug_gpio(i+1, 1);
+		k_busy_wait(DBG_SLP_TIME_US);
+		set_debug_gpio(i+1, 0);
+		}
 
 	err = bt_enable(NULL);
 	if (err) {
