@@ -9,7 +9,7 @@
 
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
-#include <zephyr/debug_gpios.h>
+// #include <zephyr/debug_gpios.h>
 
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/hci.h>
@@ -126,7 +126,7 @@ static void hrs_notify(void)
 
 #if DT_NODE_HAS_STATUS_OKAY(LED0_NODE)
 #include <zephyr/drivers/gpio.h>
-#define HAS_LED     1
+// #define HAS_LED     1
 static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(LED0_NODE, gpios);
 #define BLINK_ONOFF K_MSEC(500)
 
@@ -190,7 +190,7 @@ static void blink_stop(void)
 int main(void)
 {
 	int err;
-
+#if 0
 	init_debug_gpios();
 
 	/* Test the GPIOs, Check to be done with a logic analyzer */
@@ -199,7 +199,7 @@ int main(void)
 		k_busy_wait(DBG_SLP_TIME_US);
 		set_debug_gpio(i+1, 0);
 		}
-
+#endif
 	err = bt_enable(NULL);
 	if (err) {
 		printk("Bluetooth init failed (err %d)\n", err);
