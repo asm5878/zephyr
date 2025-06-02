@@ -19,6 +19,8 @@
 #include <zephyr/bluetooth/services/hrs.h>
 
 static bool hrf_ntf_enabled;
+extern uint32_t glob_ticks;
+extern uint64_t glob_stdby_timer_us;
 
 static const struct bt_data ad[] = {
 	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
@@ -195,7 +197,14 @@ int main(void)
 		printk("Bluetooth init failed (err %d)\n", err);
 		return 0;
 	}
-
+#if 0
+	for (int i =0; i<10; i++)
+{
+		k_sleep(K_SECONDS(1));
+		printk("+%u \n", glob_ticks);
+		printk("-%llu \n", glob_stdby_timer_us);
+}
+#endif
 	printk("Bluetooth initialized\n");
 
 	bt_conn_auth_cb_register(&auth_cb_display);
@@ -265,7 +274,9 @@ int main(void)
 	/* Implement notification. */
 	while (1) {
 		k_sleep(K_SECONDS(1));
-
+		//printk("\n %u \n", glob_ticks);
+		//printk("\n %llu \n", glob_stdby_timer_us);
+		//printk("T\n");
 		/* Heartrate measurements simulation */
 		hrs_notify();
 

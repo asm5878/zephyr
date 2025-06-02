@@ -20,8 +20,6 @@
 
 #include "app_sys.h"
 #include "app_conf.h"
-// ALMA:
-// #include "timer_if.h"
 #include "stm32_lpm.h"
 #include "ll_intf.h"
 #include "ll_sys.h"
@@ -58,21 +56,15 @@ void APP_SYS_BLE_EnterDeepSleep(void)
     {
       /* No next radio event scheduled */
       (void)ll_sys_dp_slp_enter(LL_DP_SLP_NO_WAKEUP);
-      //printk("\n NO LL EVT \n");
     }
     else if (radio_remaining_time > RADIO_DEEPSLEEP_WAKEUP_TIME_US)
     {
       /* No event in a "near" futur */
       (void)ll_sys_dp_slp_enter(radio_remaining_time - RADIO_DEEPSLEEP_WAKEUP_TIME_US);
-      //printk("\n NO LL EVT CLS \n");
     }
     else
     {
-      /** ALMA: We need to clarify if LPM must be used or not.
-       * For the moment let's assume is not critical
-       */
-      //printk("\n LL LP DSBL \n");
-      
+      /** ALMA: We need to clarify if LPM must be used or not */
       UTIL_LPM_SetOffMode(1U << CFG_LPM_LL_DEEPSLEEP, UTIL_LPM_DISABLE);
     }
 

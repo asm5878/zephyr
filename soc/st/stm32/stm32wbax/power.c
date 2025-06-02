@@ -17,30 +17,36 @@
 #include <stm32wbaxx_ll_rcc.h>
 #include <stm32wbaxx_ll_system.h>
 #include <clock_control/clock_stm32_ll_common.h>
+#include <zephyr/logging/log.h>
 
-#include "stm32_lpm.h"
+
 #ifdef CONFIG_BT_STM32WBA
+#include "stm32_lpm.h"
 #include "app_conf.h"
+#include "app_sys.h"
+#include "ll_sys.h"
 #if (CFG_SCM_SUPPORTED == 1)
 #include "scm.h"
 #endif
 #endif
-#include "app_sys.h"
-#include "ll_sys.h"
+
+#if defined(CONFIG_PM_S2RAM)
 #include <zephyr/linker/linker-defs.h>
 #include <zephyr/sys/barrier.h>
-
-#include <zephyr/logging/log.h>
-extern bool system_startup_done;
-static uint32_t boot_after_standby;
-extern void LINKLAYER_PLAT_NotifyWFIExit(void);
-extern void LINKLAYER_PLAT_NotifyWFIEnter(void);
 extern int z_arm_fault_init(void);
 extern int z_arm_cpu_idle_init(void);
 extern int z_arm_mpu_init(void);
 extern int z_arm_configure_static_mpu_regions(void);
+#endif
 
+#ifdef CONFIG_BT_STM32WBA
+extern bool system_startup_done;
+static uint32_t boot_after_standby;
+extern void LINKLAYER_PLAT_NotifyWFIExit(void);
+extern void LINKLAYER_PLAT_NotifyWFIEnter(void);
+#endif
 
+#ifdef CONFIG_BT_STM32WBA
 #if (CFG_SCM_SUPPORTED == 0)
 /* If SCM is not supported, SRAM handles for waitsate configurations are defined here */
 static RAMCFG_HandleTypeDef sram1_ns =
@@ -57,10 +63,11 @@ static RAMCFG_HandleTypeDef sram2_ns =
   0U,                     /* RAMCFG Error Code */
 };
 #endif /* CFG_SCM_SUPPORTED */
+#endif
 
 LOG_MODULE_DECLARE(soc, CONFIG_SOC_LOG_LEVEL);
 
-
+#if defined(CONFIG_PM_S2RAM)
 #if defined(CONFIG_CPU_HAS_FPU)
 static inline void stm32wbax_z_arm_floating_point_init(void)
 {
@@ -264,7 +271,9 @@ static ALWAYS_INLINE void stm32wbax_z_arm_exc_setup(void)
 	NVIC_SetPriority(SysTick_IRQn, _EXC_IRQ_DEFAULT_PRIO);
 #endif /* CPU_CORTEX_M_HAS_SYSTICK && ! CORTEX_M_SYSTICK */
 }
+#endif
 
+#ifdef CONFIG_BT_STM32WBA
 #if (CFG_SCM_SUPPORTED == 0)
 __attribute__((optimize("Ofast"))) static void Clock_Switching(void)
 {
@@ -296,7 +305,7 @@ __attribute__((optimize("Ofast"))) static void Clock_Switching(void)
   SystemCoreClockUpdate();
 }
 #endif /* (CFG_SCM_SUPPORTED == 0) */
-
+#endif
 
 void stm32_power_init(void);
 
@@ -317,6 +326,7 @@ static void disable_cache(void)
 #endif
 }
 
+#ifdef CONFIG_BT_STM32WBA
 static void PWR_ExitOffMode_std(void)
 {
 #define RADIO_INTR_PRIO_HIGH_Z_REDEF (RADIO_INTR_PRIO_HIGH + _IRQ_PRIO_OFFSET)
@@ -395,6 +405,8 @@ __attribute__((optimize("Ofast"))) static void Exit_Stop_Standby_Mode(void)
 	}
 #endif /* CFG_SCM_SUPPORTED */
 }
+#endif
+
 static void set_mode_stop(uint8_t substate_id)
 {
 
@@ -573,7 +585,10 @@ static void set_mode_suspend_to_ram(void)
 	 */
 	/* Execution is restored at this point after wake up */
 	/* Restore system clock as soon as we exit standby mode */
+	// stm32_clock_control_standby_exit();
 	stm32_clock_control_standby_exit();
+	//sys_clock_idle_exit();
+
 
 	/** Cube Code: is_boot_from_standby */
 	__HAL_RCC_PWR_CLK_ENABLE();
@@ -585,15 +600,13 @@ static void set_mode_suspend_to_ram(void)
 	if ((LL_PWR_IsActiveFlag_SB() == 1UL) && (READ_REG(RCC->CSR) == 0U)) {
 		/* When exit from standby, disable IRQ so that restore and PWR_ExitOffMode are in
 		 * critical section */
-		//printk("\n Go2STDBY 8 \n");
 		__disable_irq();
-		// boot_after_standby = 1;
+		/* boot_after_standby = 1 */
 		/** Really exiting from stddby */
 		PWR_ExitOffMode_std();
 	} else {
-		// boot_after_standby = 0;
+		/* boot_after_standby = 0 */
 		/** Exiting from STOP1 mode */
-		//printk("\n Go2STDBY 9 \n");
 		Exit_Stop_Standby_Mode();
 	}
 	/* Put the radio in active state */
@@ -618,7 +631,6 @@ void pm_state_set(enum pm_state state, uint8_t substate_id)
 		break;
 #if defined(CONFIG_PM_S2RAM)
 	case PM_STATE_SUSPEND_TO_RAM:
-		//printk("\n pm_state_set S2R \n ");
 		set_mode_suspend_to_ram();
 		break;
 #endif
@@ -702,7 +714,6 @@ void pm_state_exit_post_ops(enum pm_state state, uint8_t substate_id)
 /* Initialize STM32 Power */
 void stm32_power_init(void)
 {
-
 	LL_AHB4_GRP1_EnableClock(LL_AHB4_GRP1_PERIPH_PWR);
 
 #ifdef CONFIG_DEBUG
@@ -716,10 +727,11 @@ void stm32_power_init(void)
 #endif
 
 #ifdef CONFIG_PM_S2RAM
-#if (CFG_LPM_STDBY_SUPPORTED > 0)
 	/* Enable SRAM1, SRAM2 and RADIO retention*/
 	LL_PWR_SetSRAM1SBRetention(LL_PWR_SRAM1_SB_FULL_RETENTION);
 	LL_PWR_SetSRAM2SBRetention(LL_PWR_SRAM2_SB_FULL_RETENTION);
+#ifdef CONFIG_BT_STM32WBA
+	/* Enable RADIO retention*/
 	LL_PWR_SetRadioSBRetention(LL_PWR_RADIO_SB_FULL_RETENTION); /* Retain sleep timer configuration */
 #endif
 #endif

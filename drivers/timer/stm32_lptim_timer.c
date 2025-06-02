@@ -62,6 +62,8 @@ static const struct device *const clk_ctrl = DEVICE_DT_GET(STM32_CLOCK_CONTROL_N
  * - with prescaler of 128, the max timeout (LPTIM_TIMEBASE) is 256 seconds:
  *    0xFFFF / (LSE freq (32768Hz) / 128)
  */
+uint32_t glob_ticks = 0;
+uint64_t glob_stdby_timer_us = 0;
 
 static int32_t lptim_time_base;
 static uint32_t lptim_clock_freq = CONFIG_STM32_LPTIM_CLOCK;
@@ -625,7 +627,7 @@ void sys_clock_idle_exit(void)
 			stdby_timer_diff = stdby_timer_post - stdby_timer_pre_stdby;
 		}
 		stdby_timer_us = counter_ticks_to_us(stdby_timer, stdby_timer_diff);
-
+		glob_stdby_timer_us = stdby_timer_us;
 		/* Convert standby time in LPTIM cnt */
 		missed_lptim_cnt = (sys_clock_hw_cycles_per_sec() * stdby_timer_us) /
 				   USEC_PER_SEC;
@@ -638,6 +640,7 @@ void sys_clock_idle_exit(void)
 		/* Announce the passed ticks to the kernel */
 		dticks = (missed_lptim_cnt * CONFIG_SYS_CLOCK_TICKS_PER_SEC)
 				/ lptim_clock_freq;
+		glob_ticks = dticks;
 		sys_clock_announce(dticks);
 
 		/* We've already performed all needed operations */
