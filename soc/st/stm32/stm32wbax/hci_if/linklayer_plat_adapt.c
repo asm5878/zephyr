@@ -8,7 +8,11 @@
 #include <zephyr/drivers/entropy.h>
 #include <zephyr/logging/log.h>
 
+#include "app_conf.h"
+#include "bsp.h"
+#if (CFG_SCM_SUPPORTED == 1)
 #include "scm.h"
+#endif
 
 #define LOG_LEVEL CONFIG_SOC_LOG_LEVEL
 LOG_MODULE_REGISTER(linklayer_plat_adapt);
@@ -243,8 +247,9 @@ void LINKLAYER_PLAT_StartRadioEvt(void)
 	__HAL_RCC_RADIO_CLK_SLEEP_ENABLE();
 
 	NVIC_SetPriority((IRQn_Type)RADIO_INTR_NUM, RADIO_INTR_PRIO_HIGH_Z);
-
+#if (CFG_SCM_SUPPORTED == 1)
 	scm_notifyradiostate(SCM_RADIO_ACTIVE);
+#endif
 }
 
 void LINKLAYER_PLAT_StopRadioEvt(void)
@@ -252,8 +257,9 @@ void LINKLAYER_PLAT_StopRadioEvt(void)
 	__HAL_RCC_RADIO_CLK_SLEEP_DISABLE();
 
 	NVIC_SetPriority((IRQn_Type)RADIO_INTR_NUM, RADIO_INTR_PRIO_LOW_Z);
-
+#if (CFG_SCM_SUPPORTED == 1)
 	scm_notifyradiostate(SCM_RADIO_NOT_ACTIVE);
+#endif
 }
 
 /* Link Layer notification for RCO calibration start */

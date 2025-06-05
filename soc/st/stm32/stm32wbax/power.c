@@ -19,12 +19,64 @@
 #include <clock_control/clock_stm32_ll_common.h>
 
 #ifdef CONFIG_BT_STM32WBA
+#include "app_conf.h"
+#if (CFG_SCM_SUPPORTED == 1)
 #include "scm.h"
+#endif
 #endif
 
 #include <zephyr/logging/log.h>
 
+#ifdef CONFIG_BT_STM32WBA
+#include "linklayer_plat.h"
+#endif
+
 LOG_MODULE_DECLARE(soc, CONFIG_SOC_LOG_LEVEL);
+
+#if (CFG_SCM_SUPPORTED == 0)
+/* As SCM is not supported, SRAM handles for waitsate configurations are defined here */
+static RAMCFG_HandleTypeDef sram1_ns = {
+	RAMCFG_SRAM1,           /* Instance */
+	HAL_RAMCFG_STATE_READY, /* RAMCFG State */
+	0U,                     /* RAMCFG Error Code */
+};
+
+static RAMCFG_HandleTypeDef sram2_ns = {
+	RAMCFG_SRAM2,           /* Instance */
+	HAL_RAMCFG_STATE_READY, /* RAMCFG State */
+	0U,                     /* RAMCFG Error Code */
+};
+
+__attribute__((optimize("Ofast"))) static void Clock_Switching(void)
+{
+  /* Activate HSE clock */
+  LL_RCC_HSE_Enable();
+  while(LL_RCC_HSE_IsReady() == 0);
+
+  /* Apply PWR VOS1 power level */
+  LL_PWR_SetRegulVoltageScaling(LL_PWR_REGU_VOLTAGE_SCALE1);
+  while (LL_PWR_IsActiveFlag_VOS() == 0);
+
+  /* Switch HSE frequency from HSE16 to HSE32 */
+  LL_RCC_HSE_DisablePrescaler();
+
+  /* Switch CPU system clock to HSE */
+  LL_RCC_SetSysClkSource(LL_RCC_SYS_CLKSOURCE_HSE);
+  while (LL_RCC_GetSysClkSource() != LL_RCC_SYS_CLKSOURCE_STATUS_HSE);
+
+  /* Apply HSE32 compatible waitstates */
+  __HAL_FLASH_SET_LATENCY(FLASH_LATENCY_0);
+  while(__HAL_FLASH_GET_LATENCY() != FLASH_LATENCY_0);
+  HAL_RAMCFG_ConfigWaitState(&sram1_ns, RAMCFG_WAITSTATE_0);
+  HAL_RAMCFG_ConfigWaitState(&sram2_ns, RAMCFG_WAITSTATE_0);
+
+  /* Set HDIV 5 */
+  LL_RCC_SetAHB5Divider(LL_RCC_AHB5_DIVIDER_1); /* divided by 1 */
+
+  /* Ensure time base clock coherency */
+  SystemCoreClockUpdate();
+}
+#endif /* CFG_SCM_SUPPORTED */
 
 void stm32_power_init(void);
 
@@ -40,7 +92,17 @@ static void set_mode_stop(uint8_t substate_id)
 	sys_cache_instr_disable();
 
 #ifdef CONFIG_BT_STM32WBA
+	LINKLAYER_PLAT_NotifyWFIEnter();
+#if (CFG_SCM_SUPPORTED == 1)
 	scm_setwaitstates(LP);
+#else
+	/* SCM module is not supported, apply low power compatible waitstates */
+	__HAL_FLASH_SET_LATENCY(FLASH_LATENCY_3);
+	while (__HAL_FLASH_GET_LATENCY() != FLASH_LATENCY_3)
+		;
+	HAL_RAMCFG_ConfigWaitState(&sram1_ns, RAMCFG_WAITSTATE_1);
+	HAL_RAMCFG_ConfigWaitState(&sram2_ns, RAMCFG_WAITSTATE_1);
+#endif
 #endif
 	/* Set SLEEPDEEP bit of Cortex System Control Register */
 	LL_LPM_EnableDeepSleep();
@@ -132,12 +194,26 @@ void pm_state_set(enum pm_state state, uint8_t substate_id)
 void pm_state_exit_post_ops(enum pm_state state, uint8_t substate_id)
 {
 #ifdef CONFIG_BT_STM32WBA
+	LINKLAYER_PLAT_NotifyWFIExit();
 	if (LL_PWR_IsActiveFlag_STOP() == 1U) {
+#if (CFG_SCM_SUPPORTED == 1)
 		scm_setup();
-	} else {
-		scm_setwaitstates(RUN);
-	}
+#else
+		Clock_Switching();
 #endif
+	} else {
+#if (CFG_SCM_SUPPORTED == 1)
+		scm_setwaitstates(RUN);
+#else
+		/* Apply waitsates for HSE32 configuration */
+		__HAL_FLASH_SET_LATENCY(FLASH_LATENCY_0);
+		while (__HAL_FLASH_GET_LATENCY() != FLASH_LATENCY_0)
+			;
+		HAL_RAMCFG_ConfigWaitState(&sram1_ns, RAMCFG_WAITSTATE_0);
+		HAL_RAMCFG_ConfigWaitState(&sram2_ns, RAMCFG_WAITSTATE_0);
+#endif
+	}
+#endif /* CONFIG_BT_STM32WBA */
 
 	switch (state) {
 	case PM_STATE_SUSPEND_TO_IDLE:
@@ -174,7 +250,7 @@ void pm_state_exit_post_ops(enum pm_state state, uint8_t substate_id)
 		break;
 	}
 
-	/* When BLE is enabled, clock restoration is performed by SCM */
+	/* When BLE is enabled, clock restoration is performed by Clock_Switching  */
 #if !defined(CONFIG_BT_STM32WBA)
 	stm32_clock_control_init(NULL);
 #endif
@@ -192,7 +268,9 @@ void stm32_power_init(void)
 {
 
 #ifdef CONFIG_BT_STM32WBA
+#if (CFG_SCM_SUPPORTED == 1)
 	scm_init();
+#endif
 #endif
 
 	LL_AHB4_GRP1_EnableClock(LL_AHB4_GRP1_PERIPH_PWR);
@@ -205,6 +283,12 @@ void stm32_power_init(void)
 	LL_DBGMCU_DisableDBGStandbyMode();
 #endif
 
+#ifdef CONFIG_BT_STM32WBA
+#if (CFG_SCM_SUPPORTED == 0)
+	HAL_PWREx_ControlVoltageScaling(PWR_REGULATOR_VOLTAGE_SCALE1);
+	MODIFY_REG(FLASH->ACR, FLASH_ACR_LATENCY, (FLASH_LATENCY_0));
+#endif
+#endif
 	/* Enabling  Ultra Low power mode */
 	LL_PWR_EnableUltraLowPowerMode();
 

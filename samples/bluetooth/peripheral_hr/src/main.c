@@ -125,7 +125,7 @@ static void hrs_notify(void)
 
 #if DT_NODE_HAS_STATUS_OKAY(LED0_NODE)
 #include <zephyr/drivers/gpio.h>
-#define HAS_LED     1
+// #define HAS_LED     1
 static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(LED0_NODE, gpios);
 #define BLINK_ONOFF K_MSEC(500)
 
