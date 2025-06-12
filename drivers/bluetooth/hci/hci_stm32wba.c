@@ -13,6 +13,11 @@
 #include <zephyr/drivers/bluetooth.h>
 #include <zephyr/bluetooth/addr.h>
 #include <zephyr/drivers/clock_control/stm32_clock_control.h>
+#ifdef CONFIG_PM_DEVICE
+#include <zephyr/pm/policy.h>
+#include <zephyr/pm/device.h>
+#include <zephyr/pm/pm.h>
+#endif
 #include <linklayer_plat_local.h>
 
 #include <zephyr/sys/byteorder.h>
@@ -456,6 +461,26 @@ static int bt_hci_stm32wba_setup(const struct device *dev,
 }
 #endif /* CONFIG_BT_HCI_SETUP */
 
+#ifdef CONFIG_PM_DEVICE
+static int radio_pm_action(const struct device *dev, enum pm_device_action action)
+{
+	switch (action) {
+	case PM_DEVICE_ACTION_RESUME:
+#if defined(CONFIG_PM_S2RAM)
+#endif
+		break;
+	case PM_DEVICE_ACTION_SUSPEND:
+#if defined(CONFIG_PM_S2RAM)
+#endif
+		break;
+	default:
+		return -ENOTSUP;
+	}
+
+	return 0;
+}
+#endif /* CONFIG_PM_DEVICE */
+
 static DEVICE_API(bt_hci, drv) = {
 #if defined(CONFIG_BT_HCI_SETUP)
 	.setup          = bt_hci_stm32wba_setup,
@@ -465,9 +490,9 @@ static DEVICE_API(bt_hci, drv) = {
 };
 
 #define HCI_DEVICE_INIT(inst) \
-	static struct hci_data hci_data_##inst = { \
-	}; \
-	DEVICE_DT_INST_DEFINE(inst, NULL, NULL, &hci_data_##inst, NULL, \
+	static struct hci_data hci_data_##inst = {}; \
+	PM_DEVICE_DT_INST_DEFINE(inst, radio_pm_action); \
+	DEVICE_DT_INST_DEFINE(inst, NULL, PM_DEVICE_DT_INST_GET(inst), &hci_data_##inst, NULL, \
 			      POST_KERNEL, CONFIG_KERNEL_INIT_PRIORITY_DEVICE, &drv)
 
 /* Only one instance supported */
