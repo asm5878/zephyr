@@ -20,9 +20,23 @@
 #include <zephyr/logging/log.h>
 #include "soc.h"
 #include <cmsis_core.h>
+#include <otp.h>
 
 #define LOG_LEVEL CONFIG_SOC_LOG_LEVEL
 LOG_MODULE_REGISTER(soc);
+
+static void Config_HSE(void)
+{
+	OTP_Data_s *otp_ptr = NULL;
+
+	/* Read HSE_Tuning from OTP */
+	if (OTP_Read(DEFAULT_OTP_IDX, &otp_ptr) != HAL_OK) {
+		/* OTP no present in flash, apply default gain */
+		HAL_RCCEx_HSESetTrimming(0x0C);
+	} else {
+		HAL_RCCEx_HSESetTrimming(otp_ptr->hsetune);
+	}
+}
 
 /**
  * @brief Perform basic hardware initialization at boot.
@@ -42,6 +56,8 @@ void stm32wba_init(void)
 
 	/* Enable PWR */
 	LL_AHB4_GRP1_EnableClock(LL_AHB4_GRP1_PERIPH_PWR);
+
+	Config_HSE();
 
 #if defined(CONFIG_POWER_SUPPLY_DIRECT_SMPS)
 	LL_PWR_SetRegulatorSupply(LL_PWR_SMPS_SUPPLY);

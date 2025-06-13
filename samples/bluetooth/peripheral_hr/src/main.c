@@ -186,9 +186,113 @@ static void blink_stop(void)
 #endif /* LED0_NODE */
 #endif /* CONFIG_GPIO */
 
+typedef struct evt_s {
+  int evt_code;
+  uint32_t evt_data;
+  uint32_t evt_data_aux;
+} evt_t;
+
+char *evt_strings[] = {
+  /* 0 */ "sys_clock_announce",
+  /* 1 */ ">lptim_irq_handler",
+  /* 2 */ ">sys_clock_set_timeout",
+  /* 3 */ ">arch_suspend_to_ram",
+  /* 4 */ "<arch_suspend_to_ram",
+  /* 5 */ ">suspend_to_ram",
+  /* 6 */ "<suspend_to_ram",
+  /* 7 */ "Csys_clock_announce",
+  /* 8 */ "update_cache",
+  /* 9 */ "Csys_clock_announce1",
+  /* 10 */ ">sys_clock_idle_exit",
+  /* 11 */ "<sys_clock_idle_exit",
+  /* 12 */ ">pm_system_suspend",
+  /* 13 */ "pm_system_suspend WU kernel_ticks=%d, dummy=%d",
+  /* 14 */ "<pm_system_suspend(true)",
+  /* 15 */ ">pm_system_resume",
+  /* 16 */ "<pm_system_resume",
+  /* 17 */ "<pm_system_suspend(false)",
+  /* 18 */ ">_isr_wrapper",
+  /* 19 */ "<_isr_wrapper",
+  /* 20 */ "_isr_wrapper(WU from idle)",
+  /* 21 */ "main->sleep last_uptime=%d, dummy=%d",
+  /* 22 */ "main->wkup",
+  /* 23 */ "lptim ck off",
+  /* 24 */ "lptim ck on",
+  /* 25 */ "sys_clock_set_timeout debug",
+  /* 26 */ "lptim_irq_handler debug",
+  /* 27 */ "<lptim_irq_handler",
+  /* 28 */ "pm_system_suspend debug",
+  /* 29 */ ">pm_suspend_devices",
+  /* 30 */ "<pm_suspend_devices",
+  /* 31 */ "pm_suspend_devices debug",
+  /* 32 */ ">lptim_set_autoreload",
+  /* 33 */ "<lptim_set_autoreload",
+  /* 34 */ ">z_reset_time_slice",
+  /* 35 */ "<z_reset_time_slice",
+  /* 36 */ "z_reset_time_slice debug",
+  /* 37 */ ">unready_thread",
+  /* 38 */ "<unready_thread",
+  /* 39 */ ">z_tick_sleep",
+  /* 40 */ "<z_tick_sleep",
+  /* 41 */ "idle debug",
+  /* 42 */ ">sys_clock_driver_init",
+  /* 43 */ "<sys_clock_driver_init",
+  /* 44 */ ">set_mode_stop, substate_id=%d, dummy=%08x",
+  /* 45 */ "<set_mode_stop, substate_id=%d, dummy=%08x",
+  /* 46 */ ">Clock_Switching",
+  /* 47 */ "<Clock_Switching",
+  /* 48 */ ">radio_high_prio_isr",
+  /* 49 */ "<radio_high_prio_isr",
+  /* 50 */ ">radio_low_prio_isr",
+  /* 51 */ "<radio_low_prio_isr",
+  /* 52 */ "stop 1 wake-up",
+  
+};
+#define EVENTS_SIZE 2048
+evt_t events[EVENTS_SIZE];
+int evt_count=0;
+void add_event(int code, uint32_t val1, uint32_t val2) {
+  if (evt_count < EVENTS_SIZE) {
+    events[evt_count].evt_code = code;
+    events[evt_count].evt_data = val1;
+    events[evt_count].evt_data_aux = val2;
+    evt_count++;
+  }
+}
+#define PRE_FORMAT "%-4d(%-2d) "
+int print_events(int start)
+{
+  volatile int limit = evt_count;
+  printf ("%-4s %-32s %-16s %-16s\n", "ID", "CODE", "DATA", "AUX");
+  for (int i=start; i < limit; i++) {
+	char format[128];  
+    char * message = "Unknown";
+    if (events[i].evt_code < sizeof(evt_strings)/sizeof(char*)) {
+      message = evt_strings[events[i].evt_code];
+	}
+	if (strchr(message, '%') == NULL) {
+		  sprintf(format,
+					"%s%-32s %s\n",
+					PRE_FORMAT,
+					message,
+					"data=%08x, data_aux=%08x");
+	} else {
+		  sprintf(format, "%s%s\n", PRE_FORMAT, message);
+	}
+    printf (format, 
+			i,
+			events[i].evt_code,
+			events[i].evt_data,
+			events[i].evt_data_aux);
+  }
+  return limit;
+}
+
 int main(void)
 {
 	int err;
+	int start = 0;
+	int count = 0;
 
 	err = bt_enable(NULL);
 	if (err) {
@@ -251,6 +355,7 @@ int main(void)
 	}
 #endif /* CONFIG_BT_EXT_ADV */
 
+	k_busy_wait(5000000);
 	printk("Advertising successfully started\n");
 
 #if defined(HAS_LED)
@@ -261,10 +366,14 @@ int main(void)
 
 	blink_start();
 #endif /* HAS_LED */
-
 	/* Implement notification. */
 	while (1) {
+		add_event(21, k_uptime_ticks(), 0);
 		k_sleep(K_SECONDS(1));
+		add_event(22, 0, 0);
+		printk("Wakeup %d\n", count++);
+		
+		// start = print_events(start);
 
 		/* Heartrate measurements simulation */
 		hrs_notify();

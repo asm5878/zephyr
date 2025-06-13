@@ -17,6 +17,8 @@
 #include <zephyr/pm/policy.h>
 #include <zephyr/pm/device.h>
 #include <zephyr/pm/pm.h>
+#include "app_sys.h"
+#include "linklayer_plat.h"
 #endif
 #include <linklayer_plat_local.h>
 
@@ -464,13 +466,41 @@ static int bt_hci_stm32wba_setup(const struct device *dev,
 #ifdef CONFIG_PM_DEVICE
 static int radio_pm_action(const struct device *dev, enum pm_device_action action)
 {
+	 uint32_t radio_remaining_time = 0;
+	 
 	switch (action) {
 	case PM_DEVICE_ACTION_RESUME:
 #if defined(CONFIG_PM_S2RAM)
+		if (LL_PWR_IsActiveFlag_SB() == 1U) {
+			/* Put the radio in active state */
+			LL_AHB5_GRP1_EnableClock(LL_AHB5_GRP1_PERIPH_RADIO);
+			// Done at PM system level
+			// link_layer_register_isr();
+    			LINKLAYER_PLAT_NotifyWFIExit();
+			ll_sys_dp_slp_exit();
+		}
 #endif
 		break;
 	case PM_DEVICE_ACTION_SUSPEND:
 #if defined(CONFIG_PM_S2RAM)
+		enum pm_state state = pm_state_next_get(_current_cpu->id)->state;
+		if (state == PM_STATE_SUSPEND_TO_RAM) {
+			/* */
+			uint32_t cmd_status =
+				ll_intf_le_get_remaining_time_for_next_event(&radio_remaining_time);
+			UNUSED(cmd_status);
+			assert_param(cmd_status == SUCCESS);
+
+			if (radio_remaining_time == LL_DP_SLP_NO_WAKEUP) {
+				/* No next radio event scheduled */
+				(void)ll_sys_dp_slp_enter(LL_DP_SLP_NO_WAKEUP);
+			} else /* if (radio_remaining_time > RADIO_DEEPSLEEP_WAKEUP_TIME_US) */ {
+				/* No event in a "near" futur */
+				(void)ll_sys_dp_slp_enter(radio_remaining_time -
+							  RADIO_DEEPSLEEP_WAKEUP_TIME_US);
+			}
+			LINKLAYER_PLAT_NotifyWFIEnter();
+		}
 #endif
 		break;
 	default:

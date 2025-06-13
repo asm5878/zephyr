@@ -47,6 +47,11 @@ static const struct stm32_pclken lptim_clk[] = STM32_DT_INST_CLOCKS(0);
 #endif
 
 static const struct device *const clk_ctrl = DEVICE_DT_GET(STM32_CLOCK_CONTROL_NODE);
+#if 1
+#define add_event(a, b, c)
+#else
+extern void add_event(int code, uint32_t val1, uint32_t val2);
+#endif
 
 /*
  * Assumptions and limitations:
@@ -120,21 +125,27 @@ static void lptim_irq_handler(const struct device *unused)
 
 	uint32_t autoreload = LL_LPTIM_GetAutoReload(LPTIM);
 
+	add_event(1, LPTIM1->ISR, LPTIM1->DIER);
 	if ((LL_LPTIM_IsActiveFlag_ARROK(LPTIM) != 0)
 		&& LL_LPTIM_IsEnabledIT_ARROK(LPTIM) != 0) {
 		LL_LPTIM_ClearFlag_ARROK(LPTIM);
+		add_event(26, 1, 0);
 		if ((autoreload_next > 0) && (autoreload_next != autoreload)) {
 			/* the new autoreload value change, we set it */
 			autoreload_ready = false;
 			LL_LPTIM_SetAutoReload(LPTIM, autoreload_next);
+			add_event(26, 0x11, autoreload_next);
+			add_event(26, 0x111, autoreload);
 		} else {
 			autoreload_ready = true;
+			add_event(26, 0x12, 0);
 		}
 	}
 
 	if (arrm_state_get()) {
 		k_spinlock_key_t key = k_spin_lock(&lock);
 
+		add_event(26, 2, 0);
 		/* do not change ARR yet, sys_clock_announce will do */
 		LL_LPTIM_ClearFLAG_ARRM(LPTIM);
 
@@ -152,17 +163,22 @@ static void lptim_irq_handler(const struct device *unused)
 				* CONFIG_SYS_CLOCK_TICKS_PER_SEC)
 				/ lptim_clock_freq;
 
+		add_event(7, dticks, 0);
 		sys_clock_announce(IS_ENABLED(CONFIG_TICKLESS_KERNEL)
 				? dticks : (dticks > 0));
 	}
+	add_event(26, 3, NVIC->ISPR[1]);
+	add_event(27, LPTIM1->ISR, LPTIM1->DIER);
 }
 
 static void lptim_set_autoreload(uint32_t arr)
 {
 	/* Update autoreload register */
 	autoreload_next = arr;
+	add_event(32, arr, autoreload_ready);
 
 	if (!autoreload_ready) {
+		add_event(33, 1, autoreload_ready);
 		return;
 	}
 
@@ -173,6 +189,7 @@ static void lptim_set_autoreload(uint32_t arr)
 		LL_LPTIM_ClearFlag_ARROK(LPTIM);
 		LL_LPTIM_SetAutoReload(LPTIM, arr);
 	}
+	add_event(33, 2, 0);
 }
 
 static inline uint32_t z_clock_lptim_getcounter(void)
@@ -199,13 +216,15 @@ void sys_clock_set_timeout(int32_t ticks, bool idle)
 	int err;
 
 	ARG_UNUSED(idle);
-
+	add_event(2, ticks, idle);
+	add_event(25, 1, NVIC->ISPR[1]);		
+	add_event(25, 0x11, autoreload_ready);		
 #ifdef CONFIG_STM32_LPTIM_STDBY_TIMER
 	const struct pm_state_info *next;
 
 	next = pm_policy_next_state(CURRENT_CPU, ticks);
 
-	/* Check if STANBY or STOP3 is requested */
+	/* Check if STANDBY or STOP3 is requested */
 	timeout_stdby = false;
 	if ((next != NULL) && idle) {
 #ifdef CONFIG_PM_S2RAM
@@ -235,6 +254,7 @@ void sys_clock_set_timeout(int32_t ticks, bool idle)
 		 * Needed rump-up/setting time, lower accurency etc. should be
 		 * included in the exit-latency in the power state definition.
 		 */
+		add_event(25, 2, NVIC->ISPR[1]);		
 		counter_cancel_channel_alarm(stdby_timer, 0);
 		counter_set_channel_alarm(stdby_timer, 0, &cfg);
 
@@ -243,10 +263,17 @@ void sys_clock_set_timeout(int32_t ticks, bool idle)
 		 */
 		counter_get_value(stdby_timer, &stdby_timer_pre_stdby);
 		lptim_cnt_pre_stdby = z_clock_lptim_getcounter();
+		add_event(25, 3, NVIC->ISPR[1]);		
+		add_event(25, 4, autoreload_ready);		
 
+		LL_LPTIM_DisableIT_ARROK(LPTIM);
+		LL_LPTIM_ClearFlag_ARROK(LPTIM);
+		NVIC_ClearPendingIRQ(DT_INST_IRQN(0));
+		//NVIC->ICPR[1] = (1 << 17);
 		/* Stop clocks for LPTIM, since RTC is used instead */
 		clock_control_off(clk_ctrl, (clock_control_subsys_t) &lptim_clk[0]);
-
+		add_event(23, 1, NVIC->ISPR[1]);
+		
 		return;
 	}
 #endif /* CONFIG_STM32_LPTIM_STDBY_TIMER */
@@ -261,6 +288,7 @@ void sys_clock_set_timeout(int32_t ticks, bool idle)
 	 */
 	if (ticks == K_TICKS_FOREVER) {
 		clock_control_off(clk_ctrl, (clock_control_subsys_t) &lptim_clk[0]);
+		add_event(23, 2, 0);
 		return;
 	}
 	/*
@@ -270,6 +298,7 @@ void sys_clock_set_timeout(int32_t ticks, bool idle)
 
 	/* if LPTIM clock was previously stopped, it must now be restored */
 	err = clock_control_on(clk_ctrl, (clock_control_subsys_t) &lptim_clk[0]);
+	add_event(24, 1, err);
 
 	if (err < 0) {
 		return;
@@ -407,13 +436,14 @@ static int sys_clock_driver_init(void)
 {
 	uint32_t count_per_tick;
 	int err;
-
+	add_event(42, 0, 0);
 	if (!device_is_ready(clk_ctrl)) {
 		return -ENODEV;
 	}
 
 	/* Enable LPTIM bus clock */
 	err = clock_control_on(clk_ctrl, (clock_control_subsys_t) &lptim_clk[0]);
+	add_event(24, 2, err);
 	if (err < 0) {
 		return -EIO;
 	}
@@ -552,6 +582,7 @@ static int sys_clock_driver_init(void)
 	LL_LPTIM_ClearFLAG_ARRM(LPTIM);
 
 	/* ARROK bit validates the write operation to ARR register */
+	autoreload_ready = true;
 	LL_LPTIM_EnableIT_ARROK(LPTIM);
 	stm32_lptim_wait_ready();
 	LL_LPTIM_ClearFlag_ARROK(LPTIM);
@@ -586,6 +617,7 @@ static int sys_clock_driver_init(void)
 #endif
 
 #endif
+	add_event(43, 0, 0);
 	return 0;
 }
 
@@ -603,6 +635,7 @@ void stm32_clock_control_standby_exit(void)
 void sys_clock_idle_exit(void)
 {
 #ifdef CONFIG_STM32_LPTIM_STDBY_TIMER
+	add_event(10, timeout_stdby, 0);
 	if (timeout_stdby) {
 		cycle_t missed_lptim_cnt;
 		uint32_t stdby_timer_diff, stdby_timer_post, dticks;
@@ -627,7 +660,7 @@ void sys_clock_idle_exit(void)
 		stdby_timer_us = counter_ticks_to_us(stdby_timer, stdby_timer_diff);
 
 		/* Convert standby time in LPTIM cnt */
-		missed_lptim_cnt = (sys_clock_hw_cycles_per_sec() * stdby_timer_us) /
+		missed_lptim_cnt = (CONFIG_STM32_LPTIM_CLOCK * stdby_timer_us) /
 				   USEC_PER_SEC;
 		/* Add the LPTIM cnt pre standby */
 		missed_lptim_cnt += lptim_cnt_pre_stdby;
@@ -644,6 +677,7 @@ void sys_clock_idle_exit(void)
 		timeout_stdby = false;
 	}
 #endif /* CONFIG_STM32_LPTIM_STDBY_TIMER */
+  add_event(11, timeout_stdby, 0);
 }
 
 SYS_INIT(sys_clock_driver_init, PRE_KERNEL_2,

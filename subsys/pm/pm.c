@@ -19,6 +19,9 @@
 
 #include "pm_stats.h"
 #include "device_system_managed.h"
+#include "app_sys.h"
+#include "ll_sys.h"
+#include "app_conf.h"
 
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(pm, CONFIG_PM_LOG_LEVEL);
@@ -148,6 +151,7 @@ bool pm_system_suspend(int32_t kernel_ticks)
 	k_spinlock_key_t key;
 	int32_t ticks, events_ticks;
 	uint32_t exit_latency_ticks;
+	uint32_t radio_remaining_time, cmd_status;
 
 	SYS_PORT_TRACING_FUNC_ENTER(pm, system_suspend, kernel_ticks);
 
@@ -155,6 +159,14 @@ bool pm_system_suspend(int32_t kernel_ticks)
 		/* Return early if all states are unavailable. */
 		return false;
 	}
+
+	cmd_status =
+				ll_intf_le_get_remaining_time_for_next_event(&radio_remaining_time);
+	if ((radio_remaining_time == LL_DP_SLP_NO_WAKEUP) || (radio_remaining_time > RADIO_DEEPSLEEP_WAKEUP_TIME_US)) {
+	} else {
+		return false;
+	}
+
 
 	/*
 	 * CPU needs to be fully wake up before the event is triggered.
