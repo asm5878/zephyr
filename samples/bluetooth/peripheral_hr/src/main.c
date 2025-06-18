@@ -18,6 +18,8 @@
 #include <zephyr/bluetooth/services/bas.h>
 #include <zephyr/bluetooth/services/hrs.h>
 
+#define ST_TRACE 0
+
 static bool hrf_ntf_enabled;
 
 static const struct bt_data ad[] = {
@@ -126,6 +128,7 @@ static void hrs_notify(void)
 #if DT_NODE_HAS_STATUS_OKAY(LED0_NODE)
 #include <zephyr/drivers/gpio.h>
 // #define HAS_LED     1
+#if defined(HAS_LED)
 static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(LED0_NODE, gpios);
 #define BLINK_ONOFF K_MSEC(500)
 
@@ -183,9 +186,10 @@ static void blink_stop(void)
 	led_is_on = true;
 	gpio_pin_set(led.port, led.pin, (int)led_is_on);
 }
+#endif
 #endif /* LED0_NODE */
 #endif /* CONFIG_GPIO */
-
+# if (ST_TRACE == 1)
 typedef struct evt_s {
   int evt_code;
   uint32_t evt_data;
@@ -287,13 +291,14 @@ int print_events(int start)
   }
   return limit;
 }
-
+#endif /* ST_TRACE */
 int main(void)
 {
 	int err;
+#if (ST_TRACE == 1)
 	int start = 0;
 	int count = 0;
-
+#endif
 	err = bt_enable(NULL);
 	if (err) {
 		printk("Bluetooth init failed (err %d)\n", err);
@@ -355,7 +360,9 @@ int main(void)
 	}
 #endif /* CONFIG_BT_EXT_ADV */
 
+#if (ST_TRACE == 1)
 	k_busy_wait(5000000);
+#endif
 	printk("Advertising successfully started\n");
 
 #if defined(HAS_LED)
@@ -368,13 +375,15 @@ int main(void)
 #endif /* HAS_LED */
 	/* Implement notification. */
 	while (1) {
+#if (ST_TRACE == 1)
 		add_event(21, k_uptime_ticks(), 0);
+#endif
 		k_sleep(K_SECONDS(1));
+#if (ST_TRACE == 1)
 		add_event(22, 0, 0);
 		printk("Wakeup %d\n", count++);
-		
 		// start = print_events(start);
-
+#endif
 		/* Heartrate measurements simulation */
 		hrs_notify();
 

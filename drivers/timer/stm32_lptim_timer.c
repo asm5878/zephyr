@@ -254,7 +254,7 @@ void sys_clock_set_timeout(int32_t ticks, bool idle)
 		 * Needed rump-up/setting time, lower accurency etc. should be
 		 * included in the exit-latency in the power state definition.
 		 */
-		add_event(25, 2, NVIC->ISPR[1]);		
+		//add_event(25, 2, NVIC->ISPR[1]);
 		counter_cancel_channel_alarm(stdby_timer, 0);
 		counter_set_channel_alarm(stdby_timer, 0, &cfg);
 
@@ -263,17 +263,16 @@ void sys_clock_set_timeout(int32_t ticks, bool idle)
 		 */
 		counter_get_value(stdby_timer, &stdby_timer_pre_stdby);
 		lptim_cnt_pre_stdby = z_clock_lptim_getcounter();
-		add_event(25, 3, NVIC->ISPR[1]);		
-		add_event(25, 4, autoreload_ready);		
+		//add_event(25, 3, NVIC->ISPR[1]);
+		//add_event(25, 4, autoreload_ready);
 
 		LL_LPTIM_DisableIT_ARROK(LPTIM);
 		LL_LPTIM_ClearFlag_ARROK(LPTIM);
 		NVIC_ClearPendingIRQ(DT_INST_IRQN(0));
-		//NVIC->ICPR[1] = (1 << 17);
 		/* Stop clocks for LPTIM, since RTC is used instead */
 		clock_control_off(clk_ctrl, (clock_control_subsys_t) &lptim_clk[0]);
-		add_event(23, 1, NVIC->ISPR[1]);
-		
+		//add_event(23, 1, NVIC->ISPR[1]);
+
 		return;
 	}
 #endif /* CONFIG_STM32_LPTIM_STDBY_TIMER */
@@ -288,7 +287,7 @@ void sys_clock_set_timeout(int32_t ticks, bool idle)
 	 */
 	if (ticks == K_TICKS_FOREVER) {
 		clock_control_off(clk_ctrl, (clock_control_subsys_t) &lptim_clk[0]);
-		add_event(23, 2, 0);
+		//add_event(23, 2, 0);
 		return;
 	}
 	/*
@@ -298,7 +297,7 @@ void sys_clock_set_timeout(int32_t ticks, bool idle)
 
 	/* if LPTIM clock was previously stopped, it must now be restored */
 	err = clock_control_on(clk_ctrl, (clock_control_subsys_t) &lptim_clk[0]);
-	add_event(24, 1, err);
+	//add_event(24, 1, err);
 
 	if (err < 0) {
 		return;
@@ -436,14 +435,14 @@ static int sys_clock_driver_init(void)
 {
 	uint32_t count_per_tick;
 	int err;
-	add_event(42, 0, 0);
+	//add_event(42, 0, 0);
 	if (!device_is_ready(clk_ctrl)) {
 		return -ENODEV;
 	}
 
 	/* Enable LPTIM bus clock */
 	err = clock_control_on(clk_ctrl, (clock_control_subsys_t) &lptim_clk[0]);
-	add_event(24, 2, err);
+	//add_event(24, 2, err);
 	if (err < 0) {
 		return -EIO;
 	}
@@ -617,7 +616,7 @@ static int sys_clock_driver_init(void)
 #endif
 
 #endif
-	add_event(43, 0, 0);
+	//add_event(43, 0, 0);
 	return 0;
 }
 
@@ -635,7 +634,7 @@ void stm32_clock_control_standby_exit(void)
 void sys_clock_idle_exit(void)
 {
 #ifdef CONFIG_STM32_LPTIM_STDBY_TIMER
-	add_event(10, timeout_stdby, 0);
+	//add_event(10, timeout_stdby, 0);
 	if (timeout_stdby) {
 		cycle_t missed_lptim_cnt;
 		uint32_t stdby_timer_diff, stdby_timer_post, dticks;
@@ -677,7 +676,7 @@ void sys_clock_idle_exit(void)
 		timeout_stdby = false;
 	}
 #endif /* CONFIG_STM32_LPTIM_STDBY_TIMER */
-  add_event(11, timeout_stdby, 0);
+  //add_event(11, timeout_stdby, 0);
 }
 
 SYS_INIT(sys_clock_driver_init, PRE_KERNEL_2,

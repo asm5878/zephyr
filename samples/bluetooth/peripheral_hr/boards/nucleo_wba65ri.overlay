@@ -8,16 +8,30 @@
 	/* Change min residency time to ease power consumption measurement */
 	cpus {
 		cpu0: cpu@0 {
-			cpu-power-states = <&standby>;
+			cpu-power-states = <&stop0 &stop1 &standby>;
 		};
 
 		power-states {
 			standby: state2 {
+				compatible = "zephyr,power-state";
+				power-state-name = "suspend-to-ram";
+				substate-id = <1>;
 				min-residency-us = <10000>;
-				exit-latency-us = <800>;
+				exit-latency-us = <1000>;
 			};
 		};
 	};
+#if 0
+	swj_port: swj_port {
+		compatible = "swj-connector";
+		/delete-node/ pinctrl-1;
+		/delete-property/ pinctrl-1;
+		pinctrl-0 = <&debug_jtms_swdio_pa13 &debug_jtck_swclk_pa14
+			 &debug_jtdi_pa15 &debug_jtdo_swo_pb3
+			 &debug_njtrst_pb4>;
+		pinctrl-names = "default";
+	};
+#endif
 };
 
 &lptim1 {

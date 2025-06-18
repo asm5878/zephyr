@@ -466,23 +466,20 @@ static int bt_hci_stm32wba_setup(const struct device *dev,
 #ifdef CONFIG_PM_DEVICE
 static int radio_pm_action(const struct device *dev, enum pm_device_action action)
 {
-	 uint32_t radio_remaining_time = 0;
-	 
 	switch (action) {
 	case PM_DEVICE_ACTION_RESUME:
 #if defined(CONFIG_PM_S2RAM)
 		if (LL_PWR_IsActiveFlag_SB() == 1U) {
 			/* Put the radio in active state */
 			LL_AHB5_GRP1_EnableClock(LL_AHB5_GRP1_PERIPH_RADIO);
-			// Done at PM system level
-			// link_layer_register_isr();
+			link_layer_register_isr();
     			LINKLAYER_PLAT_NotifyWFIExit();
-			ll_sys_dp_slp_exit();
 		}
 #endif
 		break;
 	case PM_DEVICE_ACTION_SUSPEND:
 #if defined(CONFIG_PM_S2RAM)
+		uint32_t radio_remaining_time = 0;
 		enum pm_state state = pm_state_next_get(_current_cpu->id)->state;
 		if (state == PM_STATE_SUSPEND_TO_RAM) {
 			/* */
@@ -519,6 +516,8 @@ static DEVICE_API(bt_hci, drv) = {
 	.send           = bt_hci_stm32wba_send,
 };
 
+
+#if defined (CONFIG_PM_DEVICE)
 #define HCI_DEVICE_INIT(inst) \
 	static struct hci_data hci_data_##inst = {}; \
 	PM_DEVICE_DT_INST_DEFINE(inst, radio_pm_action); \
@@ -527,3 +526,12 @@ static DEVICE_API(bt_hci, drv) = {
 
 /* Only one instance supported */
 HCI_DEVICE_INIT(0)
+#else
+#define HCI_DEVICE_INIT(inst) \
+	static struct hci_data hci_data_##inst = {}; \
+	DEVICE_DT_INST_DEFINE(inst, NULL, NULL, &hci_data_##inst, NULL, \
+			      POST_KERNEL, CONFIG_KERNEL_INIT_PRIORITY_DEVICE, &drv)
+
+/* Only one instance supported */
+HCI_DEVICE_INIT(0)
+#endif
