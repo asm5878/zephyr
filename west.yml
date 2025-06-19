@@ -23,6 +23,8 @@ manifest:
       url-base: https://github.com/zephyrproject-rtos
     - name: babblesim
       url-base: https://github.com/BabbleSim
+    - name: asm5878
+      url-base: https://github.com/asm5878
 
   group-filter: [-babblesim, -optional]
 
@@ -245,7 +247,8 @@ manifest:
       groups:
         - hal
     - name: hal_stm32
-      revision: 126cbbee19208b7aaca5ad8b287cf104e8bc837a
+      remote: asm5878
+      revision: REBASE_070725_WBAX_PM_REWORK_CTM
       path: modules/hal/stm32
       groups:
         - hal
