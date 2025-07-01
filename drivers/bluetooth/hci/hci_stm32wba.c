@@ -465,14 +465,15 @@ static int radio_pm_action(const struct device *dev, enum pm_device_action actio
 {
 	switch (action) {
 	case PM_DEVICE_ACTION_RESUME:
+		LL_AHB5_GRP1_EnableClock(LL_AHB5_GRP1_PERIPH_RADIO);
 #if defined(CONFIG_PM_S2RAM)
 		if (LL_PWR_IsActiveFlag_SB() == 1U) {
 			/* Put the radio in active state */
-			LL_AHB5_GRP1_EnableClock(LL_AHB5_GRP1_PERIPH_RADIO);
 			link_layer_register_isr();
-    			LINKLAYER_PLAT_NotifyWFIExit();
 		}
 #endif
+		LINKLAYER_PLAT_NotifyWFIExit();
+		ll_sys_dp_slp_exit();
 		break;
 	case PM_DEVICE_ACTION_SUSPEND:
 #if defined(CONFIG_PM_S2RAM)
@@ -493,9 +494,9 @@ static int radio_pm_action(const struct device *dev, enum pm_device_action actio
 				(void)ll_sys_dp_slp_enter(radio_remaining_time -
 							  CFG_LPM_STDBY_WAKEUP_TIME);
 			}
-			LINKLAYER_PLAT_NotifyWFIEnter();
 		}
 #endif
+		LINKLAYER_PLAT_NotifyWFIEnter();
 		break;
 	default:
 		return -ENOTSUP;

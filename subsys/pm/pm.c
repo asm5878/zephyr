@@ -21,7 +21,6 @@
 #include "device_system_managed.h"
 #ifdef CONFIG_BT_STM32WBA
 #include "ll_sys.h"
-#include "app_conf.h"
 #endif
 
 #include <zephyr/logging/log.h>
