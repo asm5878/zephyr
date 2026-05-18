@@ -45,7 +45,7 @@ config STM32WBA_LL_THREAD_PRIO
 
 config STM32WBA_BLE_CTLR_THREAD_STACK_SIZE
 	int "Stack size of the BLE Controller thread"
-	default 512
+	default 2048
 	depends on BT_STM32WBA
 	help
 	  BLE Controller thread stack size in bytes.
