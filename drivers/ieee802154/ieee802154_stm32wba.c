@@ -585,6 +585,10 @@ static int stm32wba_802154_tx(const struct device *dev,
 
 	stm32wba_tx_wait_pending = true;
 
+#ifdef CONFIG_PM_DEVICE
+	pm_device_busy_set(dev);
+#endif
+
 	switch (mode) {
 	case IEEE802154_TX_MODE_DIRECT:
 	case IEEE802154_TX_MODE_CCA:
@@ -603,12 +607,18 @@ static int stm32wba_802154_tx(const struct device *dev,
 #endif
 	default:
 		LOG_ERR("TX mode %d not supported", mode);
+	#ifdef CONFIG_PM_DEVICE
+		pm_device_busy_clear(dev);
+	#endif
 		return -ENOTSUP;
 	}
 
 	if (err != STM32WBA_802154_RAL_ERROR_NONE) {
 		stm32wba_tx_wait_pending = false;
 		LOG_ERR("Cannot send frame");
+	#ifdef CONFIG_PM_DEVICE
+		pm_device_busy_clear(dev);
+	#endif
 		return -EIO;
 	}
 
@@ -616,6 +626,10 @@ static int stm32wba_802154_tx(const struct device *dev,
 
 	/* Wait for the callback from the radio driver. */
 	k_sem_take(&stm32wba_802154_data.tx_wait, K_FOREVER);
+
+#ifdef CONFIG_PM_DEVICE
+	pm_device_busy_clear(dev);
+#endif
 
 	stm32wba_tx_wait_pending = false;
 
@@ -666,6 +680,8 @@ static uint8_t stm32wba_802154_get_acc(const struct device *dev)
 
 static int stm32wba_802154_start(const struct device *dev)
 {
+	stm32wba_802154_ral_error_t ret;
+
 	ARG_UNUSED(dev);
 
 	/* Set Channel */
@@ -676,11 +692,39 @@ static int stm32wba_802154_start(const struct device *dev)
 	/* Configure continuous reception mode */
 	stm32wba_802154_ral_set_continuous_reception(stm32wba_802154_data.rx_on_when_idle);
 
+	/* The net stack may invoke start() on an interface that is already up. */
+	if (stm32wba_802154_data.radio_started) {
+		LOG_DBG("start ignored: already started on channel=%u rx_idle=%d",
+			stm32wba_802154_data.channel,
+			stm32wba_802154_data.rx_on_when_idle);
+		return 0;
+	}
+
 	/* Set the radio in Receive State */
-	if (stm32wba_802154_ral_receive() != STM32WBA_802154_RAL_ERROR_NONE) {
-		LOG_ERR("Failed to enter receive state");
+	ret = stm32wba_802154_ral_receive();
+	if (ret == STM32WBA_802154_RAL_ERROR_BUSY) {
+		/*
+		 * Sleepy end-device traffic can request RX while the radio is still
+		 * completing a TX/poll event. Treat that state as logically started
+		 * instead of surfacing a hard error and re-churning start requests.
+		 */
+		stm32wba_802154_data.radio_started = true;
+		LOG_DBG("receive busy on start: channel=%u rx_idle=%d",
+			stm32wba_802154_data.channel,
+			stm32wba_802154_data.rx_on_when_idle);
+		return 0;
+	}
+	if (ret != STM32WBA_802154_RAL_ERROR_NONE) {
+		LOG_ERR("Failed to enter receive state: ret=%d rx_idle=%d channel=%u started=%d isr=%d",
+			ret,
+			stm32wba_802154_data.rx_on_when_idle,
+			stm32wba_802154_data.channel,
+			stm32wba_802154_data.radio_started,
+			k_is_in_isr());
 		return -EIO;
 	}
+
+	stm32wba_802154_data.radio_started = true;
 
 	LOG_DBG("802.15.4 radio started on channel: %u",
 		stm32wba_802154_ral_channel_get());
@@ -692,6 +736,13 @@ static int stm32wba_802154_stop(const struct device *dev)
 {
 	ARG_UNUSED(dev);
 
+	if (!stm32wba_802154_data.radio_started) {
+		LOG_DBG("stop ignored: already stopped on channel=%u rx_idle=%d",
+			stm32wba_802154_data.channel,
+			stm32wba_802154_data.rx_on_when_idle);
+		return 0;
+	}
+
 	/* Disable continuous reception mode */
 	stm32wba_802154_ral_set_continuous_reception(false);
 
@@ -700,6 +751,8 @@ static int stm32wba_802154_stop(const struct device *dev)
 		LOG_ERR("Error while stopping radio");
 		return -EIO;
 	}
+
+	stm32wba_802154_data.radio_started = false;
 
 	LOG_DBG("802.15.4 radio stopped");
 
@@ -960,8 +1013,19 @@ static int stm32wba_802154_configure(const struct device *dev,
 		break;
 
 	case IEEE802154_CONFIG_RX_ON_WHEN_IDLE:
+		if (stm32wba_802154_data.rx_on_when_idle == config->rx_on_when_idle) {
+			LOG_DBG("RX_ON_WHEN_IDLE unchanged: enabled=%d started=%d channel=%u",
+				config->rx_on_when_idle,
+				stm32wba_802154_data.radio_started,
+				stm32wba_802154_data.channel);
+			break;
+		}
+
 		LOG_DBG("Setting IEEE802154_CONFIG_RX_ON_WHEN_IDLE: enabled = %d",
 			config->rx_on_when_idle);
+		LOG_DBG("RX_ON_WHEN_IDLE changed: started=%d channel=%u",
+			stm32wba_802154_data.radio_started,
+			stm32wba_802154_data.channel);
 		stm32wba_802154_data.rx_on_when_idle = config->rx_on_when_idle;
 		stm32wba_802154_ral_set_continuous_reception(config->rx_on_when_idle);
 		break;
@@ -1141,6 +1205,11 @@ static void stm32wba_802154_energy_scan_done(int8_t ed_result)
 #ifdef CONFIG_PM_DEVICE
 static int radio_pm_action(const struct device *dev, enum pm_device_action action)
 {
+	uint64_t next_radio_evt;
+	enum pm_state state;
+
+	ARG_UNUSED(dev);
+
 	switch (action) {
 	case PM_DEVICE_ACTION_RESUME:
 		LL_AHB5_GRP1_EnableClock(LL_AHB5_GRP1_PERIPH_RADIO);
@@ -1158,8 +1227,7 @@ static int radio_pm_action(const struct device *dev, enum pm_device_action actio
 	case PM_DEVICE_ACTION_SUSPEND:
 #if defined(CONFIG_PM_S2RAM)
 		if (ll_sys_dp_slp_get_state() == LL_SYS_DP_SLP_DISABLED) {
-			uint64_t next_radio_evt;
-			enum pm_state state = pm_state_next_get(_current_cpu->id)->state;
+			state = pm_state_next_get(_current_cpu->id)->state;
 
 			if (state == PM_STATE_SUSPEND_TO_RAM) {
 				next_radio_evt = os_timer_get_earliest_time();

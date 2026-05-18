@@ -256,6 +256,9 @@ struct stm32wba_802154_data_t {
 	/* Indicates if RxOnWhenIdle mode is enabled. */
 	bool rx_on_when_idle;
 
+	/* Tracks whether the radio has already been moved to the started/RX state. */
+	bool radio_started;
+
 	/* Channel on which the radio is to operate (11-26) */
 	uint8_t channel;
 };
