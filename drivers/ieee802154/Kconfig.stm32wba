@@ -59,6 +59,46 @@ config IEEE802154_STM32WBA_LOG_RX_FAILURES
 	  It can be helpful for the network traffic analysis but it generates also
 	  a lot of log records in a stressed environment.
 
+config IEEE802154_STM32WBA_MAC_DEBUG_TIMING
+	bool "MAC timing anomaly logging"
+	help
+	  Enable anomaly-oriented MAC timing logs in the STM32WBA 802.15.4 driver.
+	  When enabled, the driver reports slow TX completion, slow RX delivery
+	  after TX, and delayed RX queue dequeue events.
+
+if IEEE802154_STM32WBA_MAC_DEBUG_TIMING
+
+config IEEE802154_STM32WBA_MAC_DEBUG_TX_WARN_MS
+	int "TX completion warning threshold (ms)"
+	default 20
+	range 1 60000
+	help
+	  Warn when TX completion takes longer than this threshold.
+
+config IEEE802154_STM32WBA_MAC_DEBUG_RX_FROM_TX_DONE_WARN_MS
+	int "RX-after-TX-done warning threshold (ms)"
+	default 50
+	range 1 60000
+	help
+	  Warn when RX processing happens this long after the most recent TX-done.
+
+config IEEE802154_STM32WBA_MAC_DEBUG_RX_FROM_TX_START_WARN_MS
+	int "RX-after-TX-start warning threshold (ms)"
+	default 60
+	range 1 60000
+	help
+	  Warn when RX processing happens this long after the most recent TX-start.
+
+config IEEE802154_STM32WBA_MAC_DEBUG_RX_QUEUE_WARN_MS
+	int "RX queue dequeue warning threshold (ms)"
+	default 5
+	range 1 60000
+	help
+	  Warn when a received frame waits longer than this threshold before the
+	  RX thread dequeues it.
+
+endif # IEEE802154_STM32WBA_MAC_DEBUG_TIMING
+
 config NET_L2_CUSTOM_IEEE802154_STM32WBA
 	bool "Use ST MAC as L2"
 	default y

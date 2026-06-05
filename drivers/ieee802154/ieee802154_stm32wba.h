@@ -171,6 +171,7 @@ struct stm32wba_802154_rx_frame {
 	uint8_t *psdu; /* Pointer to a received frame. */
 	uint8_t length; /* Received frame's length */
 	uint64_t time; /* RX timestamp. */
+	int64_t enqueue_uptime_ms; /* Uptime when the frame was queued to rx_fifo. */
 	uint8_t lqi; /* Last received frame LQI value. */
 	int8_t rssi; /* Last received frame RSSI value. */
 	bool ack_fpb; /* FPB value in ACK sent for the received frame. */
@@ -249,6 +250,17 @@ struct stm32wba_802154_data_t {
 
 	/* Indicates if currently processed TX frame has dynamic data updated. */
 	bool tx_frame_mac_hdr_rdy;
+
+	/* Driver-level timing and sequence markers for MAC latency instrumentation. */
+	uint32_t tx_count;
+	uint32_t rx_count;
+	int64_t tx_start_uptime_ms;
+	int64_t tx_done_uptime_ms;
+	int64_t rx_done_uptime_ms;
+	uint8_t tx_start_seq;
+	uint8_t tx_done_seq;
+	uint8_t tx_start_type;
+	uint8_t rx_done_seq;
 
 	/* The TX power in dBm. */
 	int8_t txpwr;

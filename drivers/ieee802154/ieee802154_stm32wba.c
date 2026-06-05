@@ -69,6 +69,12 @@ IEEE802154_DEFINE_PHY_SUPPORTED_CHANNELS(drv_attr, 11, 26);
 #define MAX_CSMA_BACKOFF 4
 #define MAX_FRAME_RETRY  3
 #define CCA_THRESHOLD    (-70)
+#if defined(CONFIG_IEEE802154_STM32WBA_MAC_DEBUG_TIMING)
+#define STM32WBA_MACDBG_TX_WARN_MS              CONFIG_IEEE802154_STM32WBA_MAC_DEBUG_TX_WARN_MS
+#define STM32WBA_MACDBG_RX_FROM_TX_DONE_WARN_MS CONFIG_IEEE802154_STM32WBA_MAC_DEBUG_RX_FROM_TX_DONE_WARN_MS
+#define STM32WBA_MACDBG_RX_FROM_TX_START_WARN_MS CONFIG_IEEE802154_STM32WBA_MAC_DEBUG_RX_FROM_TX_START_WARN_MS
+#define STM32WBA_MACDBG_RX_QUEUE_WARN_MS        CONFIG_IEEE802154_STM32WBA_MAC_DEBUG_RX_QUEUE_WARN_MS
+#endif
 /* Default maximum of energy detection */
 #define DEFAULT_MAX_ED   (-36)
 /* Default minimum of energy detection */
@@ -84,6 +90,39 @@ static void stm32wba_802154_transmit_done(
 				const stm32wba_802154_ral_transmit_done_metadata_t *p_metadata);
 static void stm32wba_802154_cca_done(stm32wba_802154_ral_error_t error);
 static void stm32wba_802154_energy_scan_done(int8_t ed_result);
+
+#if defined(CONFIG_IEEE802154_STM32WBA_MAC_DEBUG_TIMING)
+static uint8_t stm32wba_802154_mac_seq(const uint8_t *psdu, uint8_t length)
+{
+	return (psdu != NULL) && (length > 2U) ? psdu[2] : 0xffU;
+}
+
+static uint8_t stm32wba_802154_mac_type(const uint8_t *psdu, uint8_t length)
+{
+	return (psdu != NULL) && (length > 1U) ? (uint8_t)(sys_get_le16(psdu) & 0x7U) : 0xffU;
+}
+
+static const char *stm32wba_802154_mac_type_name(uint8_t type)
+{
+	switch (type) {
+	case 0U:
+		return "beacon";
+	case 1U:
+		return "data";
+	case 2U:
+		return "ack";
+	case 3U:
+		return "cmd";
+	default:
+		return "other";
+	}
+}
+
+static int64_t stm32wba_802154_ms_since(int64_t start_ms)
+{
+	return (start_ms > 0) ? (k_uptime_get() - start_ms) : -1;
+}
+#endif
 
 static const struct device *stm32wba_802154_get_device(void)
 {
@@ -129,6 +168,23 @@ static void stm32wba_802154_rx_thread(void *arg1, void *arg2, void *arg3)
 #if defined(CONFIG_NET_BUF_DATA_SIZE)
 		__ASSERT_NO_MSG(pkt_len <= CONFIG_NET_BUF_DATA_SIZE);
 #endif
+
+		#if defined(CONFIG_IEEE802154_STM32WBA_MAC_DEBUG_TIMING)
+		if ((stm32wba_802154_ms_since(rx_frame->enqueue_uptime_ms) > STM32WBA_MACDBG_RX_QUEUE_WARN_MS) ||
+		    (stm32wba_802154_ms_since(stm32wba_radio->rx_done_uptime_ms) > STM32WBA_MACDBG_RX_QUEUE_WARN_MS)) {
+			LOG_INF("[MACDBG] rx-deq warn #%lu seq=%u type=%s len=%u queue_ms=%lld since_rx_done_ms=%lld since_tx_done_ms=%lld hw_time=%llu lqi=%u rssi=%d",
+				(unsigned long)stm32wba_radio->rx_count,
+				(unsigned int)stm32wba_802154_mac_seq(rx_frame->psdu, rx_frame->length),
+				stm32wba_802154_mac_type_name(stm32wba_802154_mac_type(rx_frame->psdu, rx_frame->length)),
+				(unsigned int)pkt_len,
+				stm32wba_802154_ms_since(rx_frame->enqueue_uptime_ms),
+				stm32wba_802154_ms_since(stm32wba_radio->rx_done_uptime_ms),
+				stm32wba_802154_ms_since(stm32wba_radio->tx_done_uptime_ms),
+				(unsigned long long)rx_frame->time,
+				(unsigned int)rx_frame->lqi,
+				(int)rx_frame->rssi);
+		}
+		#endif
 
 		LOG_DBG("Frame received - sequence nb: %u, length: %u", rx_frame->psdu[2],
 			pkt_len);
@@ -579,7 +635,12 @@ static int stm32wba_802154_tx(const struct device *dev,
 	stm32wba_802154_data.tx_psdu_len = payload_len;
 	stm32wba_802154_data.tx_psdu_from_tx_done = false;
 	stm32wba_tx_abort_on_reset = false;
-
+	#if defined(CONFIG_IEEE802154_STM32WBA_MAC_DEBUG_TIMING)
+	stm32wba_802154_data.tx_count++;
+	stm32wba_802154_data.tx_start_uptime_ms = k_uptime_get();
+	stm32wba_802154_data.tx_start_seq = stm32wba_802154_mac_seq(payload, payload_len);
+	stm32wba_802154_data.tx_start_type = stm32wba_802154_mac_type(payload, payload_len);
+	#endif
 	/* Reset semaphore in case ACK was received after timeout */
 	k_sem_reset(&stm32wba_802154_data.tx_wait);
 
@@ -1104,12 +1165,36 @@ static void stm32wba_802154_receive_done(uint8_t *p_buffer,
 		stm32wba_802154_data.rx_frames[i].rssi = p_metadata->power;
 		stm32wba_802154_data.rx_frames[i].lqi = p_metadata->lqi;
 		stm32wba_802154_data.rx_frames[i].time = p_metadata->time;
+		#if defined(CONFIG_IEEE802154_STM32WBA_MAC_DEBUG_TIMING)
+		stm32wba_802154_data.rx_count++;
+		stm32wba_802154_data.rx_done_uptime_ms = k_uptime_get();
+		stm32wba_802154_data.rx_done_seq = stm32wba_802154_mac_seq(p_buffer, p_metadata->length);
+		stm32wba_802154_data.rx_frames[i].enqueue_uptime_ms = stm32wba_802154_data.rx_done_uptime_ms;
+		#endif
 		stm32wba_802154_data.rx_frames[i].ack_fpb =
 							stm32wba_802154_data.last_frame_ack_fpb;
 		stm32wba_802154_data.rx_frames[i].ack_seb =
 							stm32wba_802154_data.last_frame_ack_seb;
 		stm32wba_802154_data.last_frame_ack_fpb = false;
 		stm32wba_802154_data.last_frame_ack_seb = false;
+
+		#if defined(CONFIG_IEEE802154_STM32WBA_MAC_DEBUG_TIMING)
+		if ((stm32wba_802154_ms_since(stm32wba_802154_data.tx_done_uptime_ms) > STM32WBA_MACDBG_RX_FROM_TX_DONE_WARN_MS) ||
+		    (stm32wba_802154_ms_since(stm32wba_802154_data.tx_start_uptime_ms) > STM32WBA_MACDBG_RX_FROM_TX_START_WARN_MS)) {
+			LOG_INF("[MACDBG] rx-done warn #%lu seq=%u type=%s len=%u since_tx_done_ms=%lld since_tx_start_ms=%lld hw_time=%llu lqi=%u rssi=%d ack_fpb=%u ack_seb=%u",
+				(unsigned long)stm32wba_802154_data.rx_count,
+				(unsigned int)stm32wba_802154_data.rx_done_seq,
+				stm32wba_802154_mac_type_name(stm32wba_802154_mac_type(p_buffer, p_metadata->length)),
+				(unsigned int)p_metadata->length,
+				stm32wba_802154_ms_since(stm32wba_802154_data.tx_done_uptime_ms),
+				stm32wba_802154_ms_since(stm32wba_802154_data.tx_start_uptime_ms),
+				(unsigned long long)p_metadata->time,
+				(unsigned int)p_metadata->lqi,
+				(int)p_metadata->power,
+				(unsigned int)(stm32wba_802154_data.rx_frames[i].ack_fpb ? 1U : 0U),
+				(unsigned int)(stm32wba_802154_data.rx_frames[i].ack_seb ? 1U : 0U));
+		}
+		#endif
 
 		k_fifo_put(&stm32wba_802154_data.rx_fifo, &stm32wba_802154_data.rx_frames[i]);
 
@@ -1132,6 +1217,22 @@ static void stm32wba_802154_transmit_done(
 {
 	ARG_UNUSED(p_frame);
 
+	#if defined(CONFIG_IEEE802154_STM32WBA_MAC_DEBUG_TIMING)
+	stm32wba_802154_data.tx_done_uptime_ms = k_uptime_get();
+	stm32wba_802154_data.tx_done_seq = stm32wba_802154_mac_seq(p_frame, stm32wba_802154_data.ack_frame.length + STM32WBA_PHR_LENGTH + 1U);
+	if ((error != STM32WBA_802154_RAL_ERROR_NONE) ||
+	    (stm32wba_802154_ms_since(stm32wba_802154_data.tx_start_uptime_ms) > STM32WBA_MACDBG_TX_WARN_MS)) {
+		LOG_INF("[MACDBG] tx-done warn #%lu seq=%u type=%s err=%u elapsed_ms=%lld ack_len=%u ack_rssi=%d ack_lqi=%u",
+			(unsigned long)stm32wba_802154_data.tx_count,
+			(unsigned int)stm32wba_802154_data.tx_start_seq,
+			stm32wba_802154_mac_type_name(stm32wba_802154_data.tx_start_type),
+			(unsigned int)error,
+			stm32wba_802154_ms_since(stm32wba_802154_data.tx_start_uptime_ms),
+			(unsigned int)p_metadata->length,
+			(int)p_metadata->power,
+			(unsigned int)p_metadata->lqi);
+	}
+	#endif
 	/* Ignore stale completion after reset, or completion with no active waiter. */
 	if (stm32wba_tx_abort_on_reset || !stm32wba_tx_wait_pending) {
 		return;
