@@ -19,5 +19,9 @@ else()
   board_runner_args(stm32cubeprogrammer "--port=swd" "--reset-mode=hw")
 endif()
 
+# Keep OpenOCD from issuing a startup halt command. Debug still halts via
+# board openocd.cfg init hook, while attach can connect to a running target.
+board_runner_args(openocd "--no-halt")
+
 include(${ZEPHYR_BASE}/boards/common/stm32cubeprogrammer.board.cmake)
 include(${ZEPHYR_BASE}/boards/common/openocd-stm32.board.cmake)
