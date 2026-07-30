@@ -22,6 +22,7 @@ SERIAL_CMD = '-c set _ZEPHYR_BOARD_SERIAL ' + TEST_SERIAL
 #
 
 RTOS_COMMAND = '$_TARGETNAME configure -rtos Zephyr'
+RUNNER_COMMAND = 'set _ZEPHYR_RUNNER_COMMAND'
 
 # (CONFIG symbols that are 'y', architecture is RTOS-aware?)
 ARCH_CASES = [
@@ -111,6 +112,23 @@ def test_debugserver_rtos_old_openocd(
 
     cmd = openocd_cmd(command, check_call, popen_ignore_int)
     assert RTOS_COMMAND not in cmd
+
+
+@pytest.mark.parametrize('command', ['attach', 'debug'])
+@patch('runners.openocd.OpenOcdBinaryRunner.read_version', return_value=(0, 12, 0))
+@patch('runners.openocd.OpenOcdBinaryRunner.check_call_ignore_sigint')
+@patch('runners.openocd.OpenOcdBinaryRunner.popen_ignore_int', return_value=MagicMock())
+@patch('runners.core.ZephyrBinaryRunner.require', side_effect=require_patch)
+def test_runner_command_available_before_init(
+    require, popen_ignore_int, check_call_ignore_sigint, read_version, command, openocd
+):
+    '''Attach and debug expose their command to board configuration.'''
+    openocd({}).run(command)
+
+    cmd = popen_ignore_int.call_args[0][0]
+    command_arg = f'{RUNNER_COMMAND} {command}'
+    assert command_arg in cmd
+    assert cmd.index(command_arg) < cmd.index('-c init')
 
 
 def create_from_args(runner_config, argv):

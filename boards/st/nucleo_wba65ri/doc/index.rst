@@ -305,6 +305,13 @@ you can debug an application in the usual way using OpenOCD. Here is an example 
    :maybe-skip-config:
    :goals: debug
 
+OpenOCD attaches to an active core without resetting it when using ``west attach``.
+If the core is powered down in Standby, use reset-based attachment to recover it:
+
+.. code-block:: console
+
+  $ west attach --runner openocd -- --cmd-pre-init="set RESET_ATTACH 1"
+
 .. _STM32WBA Series on www.st.com:
    https://www.st.com/en/microcontrollers-microprocessors/stm32wba-series.html
 

@@ -436,7 +436,7 @@ class OpenOcdBinaryRunner(ZephyrBinaryRunner):
         if self.elf_name is None:
             raise ValueError('Cannot debug; no .elf specified')
 
-        pre_init_cmd = []
+        pre_init_cmd = ['-c', f'set _ZEPHYR_RUNNER_COMMAND {command}']
         for i in self.pre_init:
             pre_init_cmd.append("-c")
             pre_init_cmd.append(i)
