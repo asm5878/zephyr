@@ -196,6 +196,9 @@ class PyOcdBinaryRunner(ZephyrBinaryRunner):
                       self.frequency_args +
                       self.tool_opt_args)
 
+        if command == 'attach':
+            server_cmd += ['-M', 'attach']
+
         if command == 'debugserver':
             self.log_gdbserver_message()
             self.check_call(server_cmd)

@@ -120,6 +120,11 @@ DEBUGSERVER_DEF_EXPECTED_CALL = ['pyocd',
                                  '-T', '4444',
                                  '-t', TEST_TARGET]
 
+ATTACH_ALL_EXPECTED_SERVER = DEBUGSERVER_ALL_EXPECTED_CALL + ['-M', 'attach']
+ATTACH_DEF_EXPECTED_SERVER = DEBUGSERVER_DEF_EXPECTED_CALL + ['-M', 'attach']
+ATTACH_ALL_EXPECTED_CLIENT = DEBUG_ALL_EXPECTED_CLIENT[:4]
+ATTACH_DEF_EXPECTED_CLIENT = DEBUG_DEF_EXPECTED_CLIENT[:4]
+
 
 #
 # Fixtures
@@ -182,6 +187,18 @@ def test_debug(require, rsc, pyocd_args, expectedv, pyocd):
     pyocd(pyocd_args).run('debug')
     assert require.called
     rsc.assert_called_once_with(*expectedv)
+
+
+@pytest.mark.parametrize('pyocd_args,expected', [
+    (TEST_ALL_KWARGS, (ATTACH_ALL_EXPECTED_SERVER, ATTACH_ALL_EXPECTED_CLIENT)),
+    (TEST_DEF_KWARGS, (ATTACH_DEF_EXPECTED_SERVER, ATTACH_DEF_EXPECTED_CLIENT))
+])
+@patch('runners.pyocd.PyOcdBinaryRunner.run_server_and_client')
+@patch('runners.core.ZephyrBinaryRunner.require', side_effect=require_patch)
+def test_attach(require, rsc, pyocd_args, expected, pyocd):
+    pyocd(pyocd_args).run('attach')
+    assert require.called
+    rsc.assert_called_once_with(*expected)
 
 
 @pytest.mark.parametrize('pyocd_args,expected', [
