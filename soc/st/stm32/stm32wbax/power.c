@@ -329,6 +329,9 @@ void pm_state_exit_post_ops(enum pm_state state, uint8_t substate_id)
 	 * Reenable interrupts which were disabled
 	 * when OS started idling code.
 	 */
+#ifdef CONFIG_STM32WBA_RT_DEBUG_IO_DTB
+	soc_late_init_hook();
+#endif
 	irq_unlock(0);
 }
 
