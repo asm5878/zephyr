@@ -28,6 +28,7 @@
 #include <stddef.h>
 #include <stdbool.h>
 #include "list_gen.h"
+#include <cmsis_compiler.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -218,9 +219,23 @@ static inline sys_snode_t *z_snode_next_peek(const sys_snode_t *node)
 	return node->next;
 }
 
+extern sys_snode_t * rng_node;
+
 static inline void z_snode_next_set(sys_snode_t *parent, sys_snode_t *child)
 {
-	parent->next = child;
+	if (parent == rng_node)
+	{
+		if (child == parent) {
+			// __ASSERT(child!=parent, "child is the same as parent");
+			__disable_irq();
+			while(1){};
+		}
+	}
+	else
+	{
+		parent->next = child;
+	}
+
 }
 
 static inline void z_slist_head_set(sys_slist_t *list, sys_snode_t *node)

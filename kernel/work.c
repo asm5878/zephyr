@@ -21,6 +21,96 @@
 
 LOG_MODULE_DECLARE(os, CONFIG_KERNEL_LOG_LEVEL);
 
+/* Set to 1 while investigating workqueue list corruption. */
+#define Z_WORKQUEUE_ENTROPY_DEBUG 0
+
+#if Z_WORKQUEUE_ENTROPY_DEBUG
+struct z_workqueue_debug_record {
+	uint32_t magic;
+	uint32_t reason;
+	uintptr_t queue;
+	uintptr_t work;
+	uintptr_t pending_head;
+	uintptr_t pending_tail;
+	uintptr_t node_next;
+	uint32_t work_flags;
+};
+
+struct z_workqueue_debug_last {
+	uint32_t operation;
+	uint32_t result;
+	uint32_t flags_before;
+	uint32_t flags_after;
+	uintptr_t caller;
+	uintptr_t queue;
+	uintptr_t work;
+	uintptr_t pending_head_before;
+	uintptr_t pending_tail_before;
+	uintptr_t pending_head_after;
+	uintptr_t pending_tail_after;
+	uintptr_t node_next_before;
+	uintptr_t node_next_after;
+};
+
+static volatile struct z_workqueue_debug_record z_workqueue_entropy_debug;
+static volatile struct z_workqueue_debug_last z_workqueue_entropy_debug_last;
+
+static inline void z_workqueue_debug_note(uint32_t operation,
+						  struct k_work_q *queue,
+						  struct k_work *work,
+						  uint32_t result,
+						  uint32_t flags_before,
+						  uintptr_t pending_head_before,
+						  uintptr_t pending_tail_before,
+						  uintptr_t node_next_before,
+						  uintptr_t caller)
+{
+	z_workqueue_entropy_debug_last.operation = operation;
+	z_workqueue_entropy_debug_last.result = result;
+	z_workqueue_entropy_debug_last.flags_before = flags_before;
+	z_workqueue_entropy_debug_last.flags_after =
+		work != NULL ? work->flags : 0U;
+	z_workqueue_entropy_debug_last.caller = caller;
+	z_workqueue_entropy_debug_last.queue = (uintptr_t)queue;
+	z_workqueue_entropy_debug_last.work = (uintptr_t)work;
+	z_workqueue_entropy_debug_last.pending_head_before = pending_head_before;
+	z_workqueue_entropy_debug_last.pending_tail_before = pending_tail_before;
+	z_workqueue_entropy_debug_last.pending_head_after = queue != NULL ?
+		(uintptr_t)sys_slist_peek_head(&queue->pending) : 0U;
+	z_workqueue_entropy_debug_last.pending_tail_after = queue != NULL ?
+		(uintptr_t)sys_slist_peek_tail(&queue->pending) : 0U;
+	z_workqueue_entropy_debug_last.node_next_before = node_next_before;
+	z_workqueue_entropy_debug_last.node_next_after = work != NULL ?
+		(uintptr_t)sys_slist_peek_next(&work->node) : 0U;
+}
+
+static inline void z_workqueue_debug_capture(uint32_t reason,
+						     struct k_work_q *queue,
+						     struct k_work *work,
+						     sys_snode_t *node)
+{
+	if (z_workqueue_entropy_debug.magic != 0U) {
+		return;
+	}
+
+	if (work == NULL && node != NULL) {
+		work = CONTAINER_OF(node, struct k_work, node);
+	}
+
+	z_workqueue_entropy_debug.reason = reason;
+	z_workqueue_entropy_debug.queue = (uintptr_t)queue;
+	z_workqueue_entropy_debug.work = (uintptr_t)work;
+	z_workqueue_entropy_debug.pending_head =
+		(uintptr_t)sys_slist_peek_head(&queue->pending);
+	z_workqueue_entropy_debug.pending_tail =
+		(uintptr_t)sys_slist_peek_tail(&queue->pending);
+	z_workqueue_entropy_debug.node_next =
+		(uintptr_t)(node != NULL ? sys_slist_peek_next(node) : NULL);
+	z_workqueue_entropy_debug.work_flags = work != NULL ? work->flags : 0U;
+	z_workqueue_entropy_debug.magic = 0x57514442U;
+}
+#endif /* Z_WORKQUEUE_ENTROPY_DEBUG */
+
 static inline void flag_clear(uint32_t *flagp,
 			      uint32_t bit)
 {
@@ -153,10 +243,31 @@ static void finalize_cancel_locked(struct k_work *work)
 void k_work_init(struct k_work *work,
 		  k_work_handler_t handler)
 {
+
+	uint32_t flags_before = work != NULL ? work->flags : 0U;
+	uintptr_t node_next_before = work != NULL ?
+		(uintptr_t)sys_slist_peek_next(&work->node) : 0U;
+
 	__ASSERT_NO_MSG(work != NULL);
 	__ASSERT_NO_MSG(handler != NULL);
 
+#if 0
 	*work = (struct k_work)Z_WORK_INITIALIZER(handler);
+#else
+	work->handler = handler;
+	work->queue = NULL;
+	uint32_t * ptr = (uint32_t*)&work->node;
+	if (*ptr != 0) {
+		*ptr=*(uint32_t*)0x420C0400;
+	}
+	work->flags=0;
+#endif
+
+#if Z_WORKQUEUE_ENTROPY_DEBUG
+	z_workqueue_debug_note(1U, NULL, work, 0U, flags_before, 0U, 0U,
+			       node_next_before,
+			       (uintptr_t)__builtin_return_address(0));
+#endif /* Z_WORKQUEUE_ENTROPY_DEBUG */
 
 	SYS_PORT_TRACING_OBJ_INIT(k_work, work);
 }
@@ -212,7 +323,21 @@ static inline void queue_remove_locked(struct k_work_q *queue,
 				       struct k_work *work)
 {
 	if (flag_test_and_clear(&work->flags, K_WORK_QUEUED_BIT)) {
+		uint32_t flags_before = work->flags | BIT(K_WORK_QUEUED_BIT);
+		uintptr_t pending_head_before =
+			(uintptr_t)sys_slist_peek_head(&queue->pending);
+		uintptr_t pending_tail_before =
+			(uintptr_t)sys_slist_peek_tail(&queue->pending);
+		uintptr_t node_next_before =
+			(uintptr_t)sys_slist_peek_next(&work->node);
+
 		(void)sys_slist_find_and_remove(&queue->pending, &work->node);
+#if Z_WORKQUEUE_ENTROPY_DEBUG
+		z_workqueue_debug_note(3U, queue, work, 0U, flags_before,
+				       pending_head_before, pending_tail_before,
+				       node_next_before,
+				       (uintptr_t)__builtin_return_address(0));
+#endif /* Z_WORKQUEUE_ENTROPY_DEBUG */
 	}
 }
 
@@ -283,8 +408,25 @@ static inline int queue_submit_locked(struct k_work_q *queue,
 	} else if (plugged && !draining) {
 		ret = -EBUSY;
 	} else {
+		uint32_t flags_before = work->flags;
+		uintptr_t pending_head_before =
+			(uintptr_t)sys_slist_peek_head(&queue->pending);
+		uintptr_t pending_tail_before =
+			(uintptr_t)sys_slist_peek_tail(&queue->pending);
+		uintptr_t node_next_before =
+			(uintptr_t)sys_slist_peek_next(&work->node);
+
 		sys_slist_append(&queue->pending, &work->node);
 		ret = 1;
+#if Z_WORKQUEUE_ENTROPY_DEBUG
+		z_workqueue_debug_note(2U, queue, work, ret, flags_before,
+				       pending_head_before, pending_tail_before,
+				       node_next_before,
+				       (uintptr_t)__builtin_return_address(0));
+		if (sys_slist_peek_next(&work->node) == &work->node) {
+			z_workqueue_debug_capture(3U, queue, work, &work->node);
+		}
+#endif /* Z_WORKQUEUE_ENTROPY_DEBUG */
 		(void)notify_queue_locked(queue);
 	}
 
@@ -684,6 +826,11 @@ static void work_queue_main(void *workq_ptr, void *p2, void *p3)
 
 		/* Check for and prepare any new work. */
 		node = sys_slist_get(&queue->pending);
+#if Z_WORKQUEUE_ENTROPY_DEBUG
+		if (node != NULL && sys_slist_peek_next(node) == node) {
+			z_workqueue_debug_capture(1U, queue, NULL, node);
+		}
+#endif /* Z_WORKQUEUE_ENTROPY_DEBUG */
 		if (node != NULL) {
 			/* Mark that there's some work active that's
 			 * not on the pending list.
@@ -785,6 +932,13 @@ static void work_queue_main(void *workq_ptr, void *p2, void *p3)
 		}
 
 		flag_clear(&queue->flags, K_WORK_QUEUE_BUSY_BIT);
+#if Z_WORKQUEUE_ENTROPY_DEBUG
+		if (work != NULL && work_busy_get_locked(work) == 0U &&
+			sys_slist_peek_head(&queue->pending) == &work->node &&
+			sys_slist_peek_tail(&queue->pending) == &work->node) {
+			z_workqueue_debug_capture(2U, queue, work, &work->node);
+		}
+#endif /* Z_WORKQUEUE_ENTROPY_DEBUG */
 		yield = (!flag_test(&queue->flags, K_WORK_QUEUE_NO_YIELD_BIT) &&
 			 !sys_slist_is_empty(&queue->pending));
 		k_spin_unlock(&work_lock, key);

@@ -6,7 +6,10 @@
 
 #include <zephyr/devicetree.h>
 #include <zephyr/kernel.h>
+#include <zephyr/irq.h>
+#if !defined(CONFIG_APP_ZIGBEE_SED_PSEUDO_RNG)
 #include <zephyr/drivers/entropy.h>
+#endif
 #include <zephyr/logging/log.h>
 
 #include <stm32_backup_domain.h>
@@ -51,7 +54,9 @@ static uint32_t primask_bit;
 volatile uint8_t radio_sw_low_isr_is_running_high_prio;
 
 /* get_rng_device() is implemented in sys_wireless_plat.c */
+#if !defined(CONFIG_APP_ZIGBEE_SED_PSEUDO_RNG)
 extern const struct device *get_rng_device(void);
+#endif
 
 void LINKLAYER_PLAT_DelayUs(uint32_t delay)
 {
@@ -60,6 +65,19 @@ void LINKLAYER_PLAT_DelayUs(uint32_t delay)
 
 void LINKLAYER_PLAT_GetRNG(uint8_t *ptr_rnd, uint32_t len)
 {
+#if defined(CONFIG_APP_ZIGBEE_SED_PSEUDO_RNG)
+	static uint32_t pseudo_rng_state = 0x6d2b79f5u;
+	unsigned int key = irq_lock();
+
+	for (uint32_t index = 0; index < len; index++) {
+		pseudo_rng_state ^= pseudo_rng_state << 13;
+		pseudo_rng_state ^= pseudo_rng_state >> 17;
+		pseudo_rng_state ^= pseudo_rng_state << 5;
+		ptr_rnd[index] = (uint8_t)pseudo_rng_state;
+	}
+
+	irq_unlock(key);
+#else
 	int ret;
 	const struct device *rng_dev = get_rng_device();
 
@@ -68,6 +86,7 @@ void LINKLAYER_PLAT_GetRNG(uint8_t *ptr_rnd, uint32_t len)
 	if (ret < 0) {
 		LOG_ERR("Error: entropy_get_entropy failed: %d", ret);
 	}
+#endif
 	LOG_DBG("n %d, val: %p", len, (void *)ptr_rnd);
 }
 
