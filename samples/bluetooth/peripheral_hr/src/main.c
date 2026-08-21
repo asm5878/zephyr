@@ -18,6 +18,11 @@
 #include <zephyr/bluetooth/services/bas.h>
 #include <zephyr/bluetooth/services/hrs.h>
 
+#define BT_GAP_ADV_1280MS  0x0800   /* 1280 ms */
+
+#define BT_LE_ADV_CONN_1280MS \
+	BT_LE_ADV_PARAM(BT_LE_ADV_OPT_CONN, BT_GAP_ADV_1280MS, BT_GAP_ADV_1280MS, NULL)
+
 static bool hrf_ntf_enabled;
 
 static const struct bt_data ad[] = {
@@ -203,7 +208,7 @@ int main(void)
 
 #if !defined(CONFIG_BT_EXT_ADV)
 	printk("Starting Legacy Advertising (connectable and scannable)\n");
-	err = bt_le_adv_start(BT_LE_ADV_CONN_FAST_1, ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
+	err = bt_le_adv_start(BT_LE_ADV_CONN_1280MS, ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
 	if (err) {
 		printk("Advertising failed to start (err %d)\n", err);
 		return 0;
@@ -263,7 +268,7 @@ int main(void)
 
 	/* Implement notification. */
 	while (1) {
-		k_sleep(K_SECONDS(1));
+		k_sleep(K_SECONDS(10));
 
 		/* Heartrate measurements simulation */
 		hrs_notify();
@@ -280,7 +285,7 @@ int main(void)
 		} else if (atomic_test_and_clear_bit(state, STATE_DISCONNECTED)) {
 #if !defined(CONFIG_BT_EXT_ADV)
 			printk("Starting Legacy Advertising (connectable and scannable)\n");
-			err = bt_le_adv_start(BT_LE_ADV_CONN_FAST_1, ad, ARRAY_SIZE(ad), sd,
+			err = bt_le_adv_start(BT_LE_ADV_CONN_1280MS, ad, ARRAY_SIZE(ad), sd,
 					      ARRAY_SIZE(sd));
 			if (err) {
 				printk("Advertising failed to start (err %d)\n", err);
