@@ -853,8 +853,9 @@ static int entropy_stm32_rng_get_entropy_isr(const struct device *dev,
 
 	return cnt;
 }
+sys_snode_t * rng_node =  &entropy_stm32_rng_data.filling_work.node;
 
-static int entropy_stm32_rng_init(const struct device *dev)
+static int entropy_stm32_rng_init_internal(const struct device *dev, bool resume)
 {
 	struct entropy_stm32_rng_dev_data *dev_data;
 	const struct entropy_stm32_rng_dev_cfg *dev_cfg;
@@ -889,26 +890,28 @@ static int entropy_stm32_rng_init(const struct device *dev)
 			return res;
 		}
 	}
+	if (!resume) {
+		/* Locking semaphore initialized to 1 (unlocked) */
+		k_sem_init(&dev_data->sem_lock, 1, 1);
 
-	/* Locking semaphore initialized to 1 (unlocked) */
-	k_sem_init(&dev_data->sem_lock, 1, 1);
+		/* Syncing semaphore */
+		k_sem_init(&dev_data->sem_sync, 0, 1);
 
-	/* Syncing semaphore */
-	k_sem_init(&dev_data->sem_sync, 0, 1);
-
-	k_work_init(&dev_data->filling_work, pool_filling_work_handler);
+		k_work_init(&dev_data->filling_work, pool_filling_work_handler);
+	}
 
 #if IRQLESS_TRNG
 	k_work_init_delayable(&dev_data->trng_poll_work, trng_poll_work_item);
 #endif /* IRQLESS_TRNG */
 
-	rng_pool_init((struct rng_pool *)(dev_data->thr),
-		      CONFIG_ENTROPY_STM32_THR_POOL_SIZE,
-		      CONFIG_ENTROPY_STM32_THR_THRESHOLD);
-	rng_pool_init((struct rng_pool *)(dev_data->isr),
-		      CONFIG_ENTROPY_STM32_ISR_POOL_SIZE,
-		      CONFIG_ENTROPY_STM32_ISR_THRESHOLD);
-
+	if (!resume) {
+		rng_pool_init((struct rng_pool *)(dev_data->thr),
+			      CONFIG_ENTROPY_STM32_THR_POOL_SIZE,
+				CONFIG_ENTROPY_STM32_THR_THRESHOLD);
+		rng_pool_init((struct rng_pool *)(dev_data->isr),
+			      CONFIG_ENTROPY_STM32_ISR_POOL_SIZE,
+			      CONFIG_ENTROPY_STM32_ISR_THRESHOLD);
+	}
 #if !IRQLESS_TRNG
 	IRQ_CONNECT(IRQN, IRQ_PRIO, stm32_rng_isr, &entropy_stm32_rng_data, 0);
 #endif /* !IRQLESS_TRNG */
@@ -935,10 +938,14 @@ static int entropy_stm32_rng_init(const struct device *dev)
 			return -ENOTSUP;
 		}
 	}
-
-	start_pool_filling(true);
-
+	if (!resume) {
+		start_pool_filling(true);
+	}
 	return 0;
+}
+
+static int entropy_stm32_rng_init(const struct device *dev) {
+	return entropy_stm32_rng_init_internal(dev,false);
 }
 
 #ifdef CONFIG_PM_DEVICE
@@ -970,7 +977,7 @@ static int entropy_stm32_rng_pm_action(const struct device *dev,
 #endif /* health_test_magic */
 			if (LL_RNG_GetHealthConfig(dev_data->rng) !=
 				DT_INST_PROP_OR(0, health_test_config, 0U)) {
-				entropy_stm32_rng_init(dev);
+				entropy_stm32_rng_init_internal(dev,true);
 			} else if (!entropy_stm32_rng_data.filling_pools) {
 				/* Resume RNG only if it was suspended during filling pool */
 #if defined(CONFIG_SOC_SERIES_STM32WBX) || defined(CONFIG_STM32H7_DUAL_CORE)
