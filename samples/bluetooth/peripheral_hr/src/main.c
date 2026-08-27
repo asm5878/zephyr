@@ -17,6 +17,7 @@
 #include <zephyr/bluetooth/gatt.h>
 #include <zephyr/bluetooth/services/bas.h>
 #include <zephyr/bluetooth/services/hrs.h>
+#include <zephyr/net_buf.h>
 
 #define BT_GAP_ADV_1280MS  0x0800   /* 1280 ms */
 
@@ -24,6 +25,12 @@
 	BT_LE_ADV_PARAM(BT_LE_ADV_OPT_CONN, BT_GAP_ADV_1280MS, BT_GAP_ADV_1280MS, NULL)
 
 static bool hrf_ntf_enabled;
+
+#if 0
+	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
+	BT_DATA_BYTES(BT_DATA_MANUFACTURER_DATA, 0x01, 0x02),
+#endif
+
 
 static const struct bt_data ad[] = {
 	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
@@ -94,6 +101,66 @@ static void auth_cancel(struct bt_conn *conn)
 static struct bt_conn_auth_cb auth_cb_display = {
 	.cancel = auth_cancel,
 };
+
+static void get_adv_tx_power(void)
+{
+	struct net_buf *rsp = NULL;
+	struct bt_hci_rp_le_read_chan_tx_power *rp;
+	int err;
+
+	err = bt_hci_cmd_send_sync(BT_HCI_OP_LE_READ_ADV_CHAN_TX_POWER, NULL, &rsp);
+	if (err) {
+		printk("Reading advertising TX power failed (err %d)\n", err);
+		return;
+	}
+
+	rp = (void *)rsp->data;
+	printk("Getting advertising TX power: %d dBm\n", rp->tx_power_level);
+
+	net_buf_unref(rsp);
+}
+/*
+ * Set advertising TX power
+ * using proprietary command ACI_HAL_SET_TX_POWER_LEVEL
+ * opcode, input and output parameters are described in the ST wireless interface documentation
+ * opcode = 0xFC0F
+ * See also modules\hal\stm32\lib\stm32wba\STM32_WPAN\ble\stack\include\auto\ble_types.h for type definitions.
+ */
+
+#define ACI_HAL_SET_TX_POWER_LEVEL       BT_OP(BT_OGF_VS, 0xFC0F)
+
+struct aci_set_tx_power_cp {
+  uint8_t En_High_Power;
+  uint8_t PA_Level;
+};
+
+static void set_adv_tx_power(uint8_t tx_power)
+{
+	struct aci_set_tx_power_cp *cp;
+	struct net_buf *buf, *rsp;
+	int err;
+
+	/* Immediate HCI command creation */
+	buf = bt_hci_cmd_alloc(K_NO_WAIT);
+	if (!buf) {
+	    printk("bt_hci_cmd_alloc failed with -NOBUFS \n");
+	}
+
+	/* Adding space for command parameters */
+	cp = net_buf_add(buf, sizeof(*cp));
+
+	/* Filling parameters */
+	cp->En_High_Power = 0x01; /* Required, but ignored by the controller */
+	cp->PA_Level = tx_power;
+
+	/* Sending the command */
+	err = bt_hci_cmd_send_sync(ACI_HAL_SET_TX_POWER_LEVEL, buf, &rsp);
+	if (err) {
+		printk("Setting advertising TX power failed (err %d)\n", err);
+	}
+	net_buf_unref(rsp);
+}
+
 
 static void bas_notify(void)
 {
@@ -206,6 +273,11 @@ int main(void)
 
 	bt_hrs_cb_register(&hrs_cb);
 
+	get_adv_tx_power();
+	printk("Setting Advertising TX power to 0 dBm\n");
+	set_adv_tx_power(0x19);
+	get_adv_tx_power();
+
 #if !defined(CONFIG_BT_EXT_ADV)
 	printk("Starting Legacy Advertising (connectable and scannable)\n");
 	err = bt_le_adv_start(BT_LE_ADV_CONN_1280MS, ad, ARRAY_SIZE(ad), sd, ARRAY_SIZE(sd));
@@ -268,7 +340,7 @@ int main(void)
 
 	/* Implement notification. */
 	while (1) {
-		k_sleep(K_SECONDS(10));
+		k_sleep(K_SECONDS(200));
 
 		/* Heartrate measurements simulation */
 		hrs_notify();

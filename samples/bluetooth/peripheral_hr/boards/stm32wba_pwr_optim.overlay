@@ -12,7 +12,7 @@
 
 		power-states {
 			standby: state2 {
-				exit-latency-us = <500>;
+				exit-latency-us = <350>;
 			};
 		};
 	};
