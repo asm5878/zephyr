@@ -667,6 +667,8 @@ static uint8_t stm32wba_802154_get_acc(const struct device *dev)
 
 static int stm32wba_802154_start(const struct device *dev)
 {
+	stm32wba_802154_ral_error_t error;
+
 	ARG_UNUSED(dev);
 
 	/* Set Channel */
@@ -678,8 +680,12 @@ static int stm32wba_802154_start(const struct device *dev)
 	stm32wba_802154_ral_set_continuous_reception(stm32wba_802154_data.rx_on_when_idle);
 
 	/* Set the radio in Receive State */
-	if (stm32wba_802154_ral_receive() != STM32WBA_802154_RAL_ERROR_NONE) {
-		LOG_ERR("Failed to enter receive state");
+	error = stm32wba_802154_ral_receive();
+	if (error != STM32WBA_802154_RAL_ERROR_NONE) {
+		LOG_ERR("Failed to enter receive state: %d", error);
+		if (error == STM32WBA_802154_RAL_ERROR_NO_BUFS) {
+			return -ENOBUFS;
+		}
 		return -EIO;
 	}
 
