@@ -262,11 +262,14 @@ static int stm32wba_802154_configure_extended(enum ieee802154_stm32wba_config_ty
 		LOG_DBG("Setting RADIO_RESET");
 		/* Unblock any waiter and mark current TX as aborted. */
 		stm32wba_tx_abort_on_reset = true;
-		stm32wba_tx_wait_pending = false;
 		stm32wba_802154_data.tx_result = STM32WBA_802154_RAL_ERROR_ABORT;
 		stm32wba_802154_data.tx_psdu_from_tx_done = false;
 		stm32wba_802154_data.ack_frame.psdu = NULL;
 		stm32wba_802154_data.ack_frame.length = 0;
+		if (stm32wba_tx_wait_pending) {
+			stm32wba_tx_wait_pending = false;
+			k_sem_give(&stm32wba_802154_data.tx_wait);
+		}
 
 		ret = stm32wba_802154_ral_radio_reset();
 		if (ret != STM32WBA_802154_RAL_ERROR_NONE) {
@@ -570,10 +573,15 @@ static int stm32wba_802154_tx(const struct device *dev,
 	uint8_t payload_len = frag->len + IEEE802154_FCS_LENGTH;
 	uint8_t *payload = frag->data;
 	stm32wba_802154_ral_error_t err;
+	int ret;
 
 	if (payload_len > IEEE802154_MTU + IEEE802154_FCS_LENGTH) {
 		LOG_ERR("Payload too large: %d", payload_len);
 		return -EMSGSIZE;
+	}
+
+	if (IS_ENABLED(CONFIG_PM_S2RAM)) {
+		pm_policy_state_lock_get(PM_STATE_SUSPEND_TO_RAM, PM_ALL_SUBSTATES);
 	}
 
 	memcpy(stm32wba_802154_data.tx_psdu, payload, payload_len);
@@ -604,13 +612,15 @@ static int stm32wba_802154_tx(const struct device *dev,
 #endif
 	default:
 		LOG_ERR("TX mode %d not supported", mode);
-		return -ENOTSUP;
+		ret = -ENOTSUP;
+		goto unlock_pm;
 	}
 
 	if (err != STM32WBA_802154_RAL_ERROR_NONE) {
 		stm32wba_tx_wait_pending = false;
 		LOG_ERR("Cannot send frame");
-		return -EIO;
+		ret = -EIO;
+		goto unlock_pm;
 	}
 
 	stm32wba_802154_tx_started(dev, pkt, frag);
@@ -630,6 +640,16 @@ static int stm32wba_802154_tx(const struct device *dev,
 
 	net_pkt_set_ieee802154_frame_secured(pkt, stm32wba_802154_data.tx_frame_is_secured);
 	net_pkt_set_ieee802154_mac_hdr_rdy(pkt, stm32wba_802154_data.tx_frame_mac_hdr_rdy);
+	ret = 0;
+
+unlock_pm:
+	if (IS_ENABLED(CONFIG_PM_S2RAM)) {
+		pm_policy_state_lock_put(PM_STATE_SUSPEND_TO_RAM,
+			PM_ALL_SUBSTATES);
+	}
+	if (ret != 0) {
+		return ret;
+	}
 
 	switch (stm32wba_802154_data.tx_result) {
 	case STM32WBA_802154_RAL_ERROR_NONE:
