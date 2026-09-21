@@ -86,6 +86,19 @@ static void stm32wba_802154_transmit_done(
 static void stm32wba_802154_cca_done(stm32wba_802154_ral_error_t error);
 static void stm32wba_802154_energy_scan_done(int8_t ed_result);
 
+void ll_report(const char * Text, ...)
+{
+  char msg[255];
+ 
+  va_list args;
+ 
+  va_start(args, Text );
+  vsnprintf(msg, 254, Text, args);
+  va_end(args);
+ 
+  printk(">>>> %s\n",msg);
+}
+
 static const struct device *stm32wba_802154_get_device(void)
 {
 	LOG_DBG("Getting device instance");
