@@ -26,10 +26,16 @@ LOG_MODULE_DECLARE(net_echo_client_sample, LOG_LEVEL_DBG);
 #include "ca_certificate.h"
 
 #define RECV_BUF_SIZE 1280
+#define UDP_SEQUENCE_SIZE sizeof(uint32_t)
 #define UDP_SLEEP K_MSEC(150)
 #define UDP_WAIT K_SECONDS(10)
 
+BUILD_ASSERT(CONFIG_NET_SAMPLE_UDP_PAYLOAD_SIZE_MAX == 0 ||
+	     CONFIG_NET_SAMPLE_UDP_PAYLOAD_SIZE_MAX >= UDP_SEQUENCE_SIZE,
+	     "Maximum UDP payload size must fit the sequence number");
+
 static APP_BMEM char recv_buf[RECV_BUF_SIZE];
+static APP_BMEM char send_buf[RECV_BUF_SIZE];
 
 static K_THREAD_STACK_DEFINE(udp_tx_thread_stack, UDP_STACK_SIZE);
 static struct k_thread udp_tx_thread;
@@ -142,14 +148,24 @@ void init_udp(void)
 
 static int send_udp_data(struct sample_data *data)
 {
+	uint32_t payload_size_max = data->udp.mtu;
 	int ret;
+
+	if (CONFIG_NET_SAMPLE_UDP_PAYLOAD_SIZE_MAX > 0) {
+		payload_size_max = MIN(payload_size_max,
+				       CONFIG_NET_SAMPLE_UDP_PAYLOAD_SIZE_MAX);
+	}
 
 	do {
 		data->udp.expecting = sys_rand32_get() % ipsum_len;
-	} while (data->udp.expecting == 0U ||
-		 data->udp.expecting > data->udp.mtu);
+	} while (data->udp.expecting < UDP_SEQUENCE_SIZE ||
+		 data->udp.expecting > payload_size_max);
 
-	ret = send(data->udp.sock, lorem_ipsum, data->udp.expecting, 0);
+	memcpy(send_buf, lorem_ipsum, data->udp.expecting);
+	data->udp.sequence++;
+	memcpy(send_buf, &data->udp.sequence, UDP_SEQUENCE_SIZE);
+
+	ret = send(data->udp.sock, send_buf, data->udp.expecting, 0);
 
 	if (PRINT_PROGRESS) {
 		LOG_DBG("%s UDP: Sent %d bytes", data->proto, data->udp.expecting);
@@ -162,12 +178,25 @@ static int send_udp_data(struct sample_data *data)
 
 static int compare_udp_data(struct sample_data *data, const char *buf, uint32_t received)
 {
+	uint32_t sequence;
+
+	if (received < UDP_SEQUENCE_SIZE) {
+		LOG_ERR("Invalid amount of data received: UDP %s", data->proto);
+		return -EIO;
+	}
+
+	memcpy(&sequence, buf, UDP_SEQUENCE_SIZE);
+	if (sequence != data->udp.sequence) {
+		return -ESTALE;
+	}
+
 	if (received != data->udp.expecting) {
 		LOG_ERR("Invalid amount of data received: UDP %s", data->proto);
 		return -EIO;
 	}
 
-	if (memcmp(buf, lorem_ipsum, received) != 0) {
+	if (memcmp(buf + UDP_SEQUENCE_SIZE, lorem_ipsum + UDP_SEQUENCE_SIZE,
+		   received - UDP_SEQUENCE_SIZE) != 0) {
 		LOG_ERR("Invalid data received: UDP %s", data->proto);
 		return -EIO;
 	}
@@ -275,6 +304,10 @@ static int process_udp_proto(struct sample_data *data)
 	}
 
 	ret = compare_udp_data(data, recv_buf, received);
+	if (ret == -ESTALE) {
+		return 0;
+	}
+
 	if (ret != 0) {
 		LOG_WRN("%s UDP: Received and compared %d bytes, data "
 			"mismatch", data->proto, received);

@@ -58,5 +58,13 @@ config NET_SAMPLE_SEND_ITERATIONS
 	  Send sample data this many times before exiting. A value of
 	  zero means that the sample application is run forever.
 
+config NET_SAMPLE_UDP_PAYLOAD_SIZE_MAX
+	int "Maximum UDP payload size"
+	default 0
+	range 0 1280
+	help
+	  Limit the randomly generated UDP payload size. A value of zero
+	  uses the network interface MTU as the limit.
+
 source "samples/net/common/Kconfig"
 source "Kconfig.zephyr"

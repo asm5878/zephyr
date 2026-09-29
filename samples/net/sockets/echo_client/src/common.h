@@ -50,6 +50,7 @@ struct sample_data {
 	struct {
 		int sock;
 		uint32_t expecting;
+		uint32_t sequence;
 		uint32_t counter;
 		uint32_t mtu;
 		struct udp_control *ctrl;
