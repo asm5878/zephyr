@@ -624,9 +624,11 @@ static int radio_pm_action(const struct device *dev, enum pm_device_action actio
 
 			if (state == PM_STATE_SUSPEND_TO_RAM) {
 				next_radio_evt = os_timer_get_earliest_time();
-				if (next_radio_evt > CFG_LPM_STDBY_WAKEUP_TIME) {
-					/* No event in a "near" future */
-					next_radio_evt -= CFG_LPM_STDBY_WAKEUP_TIME;
+				if (next_radio_evt > 0) {
+					/*
+					 * No event in a "near" future as custom radio ticks
+					 * have been already considered for the power state selection
+					 */
 					ll_sys_dp_slp_enter(next_radio_evt);
 				}
 			}
