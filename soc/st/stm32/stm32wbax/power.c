@@ -28,8 +28,22 @@
 
 #include <zephyr/logging/log.h>
 
-#if defined(CONFIG_PM) && (defined(CONFIG_BT) || defined(CONFIG_IEEE802154))
+#define PWRC_NODE DT_INST(0, st_stm32wba_pwr)
+#define STANDBY_EXIT_LATENCY_PROFILING DT_PROP(PWRC_NODE, standby_exit_latency_profiling)
+
+#if STANDBY_EXIT_LATENCY_PROFILING
+#include <zephyr/pm/device.h>
 #include <zephyr/pm/policy.h>
+#include <zephyr/sys/printk.h>
+
+BUILD_ASSERT(IS_ENABLED(CONFIG_PM_S2RAM), "Standby exit profiling requires CONFIG_PM_S2RAM");
+BUILD_ASSERT(IS_ENABLED(CONFIG_PM_POLICY_CUSTOM),
+	     "Standby exit profiling requires CONFIG_PM_POLICY_CUSTOM");
+BUILD_ASSERT(DT_NODE_HAS_PROP(PWRC_NODE, standby_exit_latency_initial_us),
+	     "Standby exit profiling requires standby-exit-latency-initial-us");
+#endif
+
+#if defined(CONFIG_PM) && (defined(CONFIG_BT) || defined(CONFIG_IEEE802154))
 #include <os_wrapper.h>
 #include <ll_sys.h>
 #endif
@@ -38,7 +52,6 @@ LOG_MODULE_DECLARE(soc, CONFIG_SOC_LOG_LEVEL);
 
 #if defined(CONFIG_PM_S2RAM)
 /* Retained region information (from DTS) */
-#define PWRC_NODE	DT_INST(0, st_stm32wba_pwr)
 #define RETAINED_SRAM12	DT_CHOSEN(zephyr_sram)
 #define RETAINED_SRAM12_START	(DT_REG_ADDR(RETAINED_SRAM12))
 #define RETAINED_SRAM12_END	(RETAINED_SRAM12_START + DT_REG_SIZE(RETAINED_SRAM12))
@@ -140,11 +153,69 @@ static uint32_t flash_latency_backup;
 #if defined(CONFIG_PM_S2RAM)
 /* set to true if standby mode has been effectively entered */
 bool standby_entered;
+
+#if STANDBY_EXIT_LATENCY_PROFILING
+uint32_t stdby_exit_time = DT_PROP_OR(PWRC_NODE, standby_exit_latency_initial_us, 0);
+static bool stm32_standby_exit_time_measured = false;
+static bool standby_exit_timer_active;
+
+#define STANDBY_EXIT_SYSTICK_HZ DT_PROP(DT_NODELABEL(clk_lse), clock_frequency)
+
+BUILD_ASSERT(!IS_ENABLED(CONFIG_CORTEX_M_SYSTICK),
+	     "Standby exit measurement requires an unused SysTick");
+BUILD_ASSERT(!IS_ENABLED(CONFIG_PM_EARLY_SYSTEM_TIMER_RESUME),
+	     "Standby exit measurement must stop after device resume");
+BUILD_ASSERT(DT_NODE_HAS_STATUS(DT_NODELABEL(clk_lse), okay),
+	     "Standby exit measurement requires LSE");
+BUILD_ASSERT(STANDBY_EXIT_SYSTICK_HZ > 0U, "LSE frequency must be nonzero");
+#endif
+
 static struct fpu_ctx_full fpu_state;
 static struct scb_context scb_state;
 #if defined(CONFIG_ARM_MPU)
 static struct z_mpu_context_retained mpu_state;
 #endif
+
+#if STANDBY_EXIT_LATENCY_PROFILING && defined(CONFIG_PM_POLICY_CUSTOM)
+const struct pm_state_info *pm_policy_next_state(uint8_t cpu, int32_t ticks)
+{
+	static struct pm_state_info selected_state;
+	const struct pm_state_info *cpu_states;
+	const struct pm_state_info *selected = NULL;
+	uint8_t num_states;
+
+#if defined(CONFIG_PM_NEED_ALL_DEVICES_IDLE)
+	if (pm_device_is_any_busy()) {
+		return NULL;
+	}
+#endif
+
+	num_states = pm_state_cpu_get_all(cpu, &cpu_states);
+
+	for (uint8_t state_index = 0; state_index < num_states; state_index++) {
+		struct pm_state_info candidate = cpu_states[state_index];
+		uint64_t residency_us;
+
+		if (candidate.state == PM_STATE_SUSPEND_TO_RAM) {
+			candidate.exit_latency_us = stdby_exit_time;
+		}
+
+		if (!pm_policy_state_is_available(candidate.state, candidate.substate_id)) {
+			continue;
+		}
+
+		residency_us = (uint64_t)candidate.min_residency_us + candidate.exit_latency_us;
+		if ((ticks >= 0) && (k_us_to_ticks_ceil64(residency_us) > (uint32_t)ticks)) {
+			continue;
+		}
+
+		selected_state = candidate;
+		selected = &selected_state;
+	}
+
+	return selected;
+}
+#endif /* STANDBY_EXIT_LATENCY_PROFILING && CONFIG_PM_POLICY_CUSTOM */
 #endif
 
 static int enter_low_power_mode(void)
@@ -234,8 +305,34 @@ static void set_mode_suspend_to_ram_enter(void)
 	}
 }
 
+#if STANDBY_EXIT_LATENCY_PROFILING
+static inline void set_systick(void)
+{
+	SysTick->LOAD = SysTick_LOAD_RELOAD_Msk;
+	SysTick->VAL = 0U;
+	SysTick->CTRL = SysTick_CTRL_ENABLE_Msk;
+}
+
+static inline uint32_t get_systick_us(void)
+{
+	/*
+	 * At 32.768 kHz (LSE), the 24-bit SysTick overflows after 512 seconds.
+	 * Resume is assumed to complete before overflow.
+	*/
+	return ((uint64_t)(SysTick->LOAD - SysTick->VAL) * 1000000U) / STANDBY_EXIT_SYSTICK_HZ;
+}
+#endif
+
 static void set_mode_suspend_to_ram_exit(void)
 {
+#if STANDBY_EXIT_LATENCY_PROFILING
+	if (standby_entered && !stm32_standby_exit_time_measured && LL_RCC_LSE_IsReady()) {
+		LL_RCC_SetSystickClockSource(LL_RCC_SYSTICK_CLKSOURCE_LSE);
+		set_systick();
+		standby_exit_timer_active = true;
+	}
+#endif
+
 	/* Save MPU, SCB and FPU states */
 #if defined(CONFIG_ARM_MPU)
 	z_arm_restore_mpu_context(&mpu_state);
@@ -384,6 +481,18 @@ void pm_state_exit_post_ops(enum pm_state state, uint8_t substate_id)
 			stm32_pwrc_dispatch_wakeup_gpio_irqs();
 		}
 #endif /* CONFIG_STM32_WKUP_PINS && CONFIG_GPIO_STM32 */
+
+#if STANDBY_EXIT_LATENCY_PROFILING
+		if (standby_exit_timer_active) {
+			SysTick->CTRL = 0U;
+			stdby_exit_time = get_systick_us();
+			standby_exit_timer_active = false;
+			stm32_standby_exit_time_measured = true;
+
+			printk("Standby software exit time: %u us\n",
+			       stdby_exit_time);
+		}
+#endif
 
 		/*
 		 * The full post-standby re-initialization sequence has been

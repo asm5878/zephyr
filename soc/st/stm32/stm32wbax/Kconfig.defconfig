@@ -18,6 +18,10 @@ endchoice
 config STM32_LPTIM_TIMER
 	default y if PM
 
+choice PM_POLICY
+	default PM_POLICY_CUSTOM if $(dt_nodelabel_bool_prop,pwr,standby-exit-latency-profiling)
+endchoice
+
 config BT_STM32WBA
 	select ENTROPY_GENERATOR
 	select USE_STM32_HAL_RAMCFG
