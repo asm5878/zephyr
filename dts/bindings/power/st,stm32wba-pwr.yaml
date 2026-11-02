@@ -13,6 +13,33 @@ compatible: "st,stm32wba-pwr"
 include: "st,stm32-dualreg-pwr.yaml"
 
 properties:
+  standby-exit-latency-profiling:
+    type: boolean
+    description: |
+      Enables one-shot measurement of the Standby software exit latency.
+      The first successful Standby resume measures SoC restoration and
+      synchronous device resume using SysTick clocked by LSE. The measured
+      value replaces standby-exit-latency-initial-us in the custom PM policy.
+
+      Requires CONFIG_PM_S2RAM, an unused SysTick, enabled LSE, and
+      CONFIG_PM_EARLY_SYSTEM_TIMER_RESUME disabled. The SoC defaults to
+      CONFIG_PM_POLICY_CUSTOM when this property is present; selecting the
+      default PM policy explicitly is not supported with profiling enabled.
+
+      Hardware wakeup and execution outside the measurement interval are not
+      included. A single software measurement is not a worst-case bound.
+      The power state's exit-latency-us still controls latency-request filtering.
+
+  standby-exit-latency-initial-us:
+    type: int
+    description: |
+      Initial Standby exit latency in microseconds, required when
+      standby-exit-latency-profiling is enabled and ignored otherwise.
+      Used for state selection and wakeup advance until the first successful
+      measurement replaces it. Choose a conservative budget covering hardware
+      and software wakeup time; waking too late can hide oscillator startup
+      behind an independent radio wakeup request and underestimate resume time.
+
   retain-sram2:
     type: boolean
     description: |
@@ -28,6 +55,11 @@ properties:
       with SRAM2 (in this case, retention is always enabled).
 
 examples:
+  - |
+    &pwr {
+            standby-exit-latency-profiling;
+            standby-exit-latency-initial-us = <1500>;
+    };
   - |
     /*
      * Not used RAM retained (and so powered) is simply a
